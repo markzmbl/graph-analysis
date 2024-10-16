@@ -2,6 +2,7 @@ import time
 import psutil
 from pathlib import Path
 
+
 def iteration_logging(generator, log_path: Path, log_interval=1):
     """
     Tracks iterations over a generator and logs progress every log_interval seconds,
@@ -19,7 +20,7 @@ def iteration_logging(generator, log_path: Path, log_interval=1):
 
     with Path(log_path).open("w") as log_file:
         # Header for the log file
-        print("time_seconds,iterations_total,iterations_rate,memory_usage_bytes", file=log_file)
+        log_file.write("time_seconds,iterations_total,iterations_rate,memory_usage_bytes\n")
 
         for item in generator:
             total_iterations += 1
@@ -34,8 +35,8 @@ def iteration_logging(generator, log_path: Path, log_interval=1):
                 memory_usage_bytes = process.memory_info().rss
 
                 # Log progress: time, iterations, rate, memory usage
-                line = f"{elapsed_time},{total_iterations},{rate},{memory_usage_bytes}"
-                print(line, file=log_file)
+                line = f"{elapsed_time},{total_iterations},{rate},{memory_usage_bytes}\n"
+                log_file.write(line)
 
                 last_log_time = current_time  # Reset the last log time
 
