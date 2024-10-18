@@ -17,8 +17,7 @@ def process_graph(graph_path, length_bound, log_directory):
     with graph_path.open("rb") as graph_file:
         graph = pickle.load(graph_file)
 
-    # Optionally, disable tqdm within the subprocess to avoid cluttering
-    for cycle in iteration_logging(nx.simple_cycles(graph, length_bound=length_bound), log_path, show_progress=False):
+    for cycle in iteration_logging(nx.simple_cycles(graph, length_bound=length_bound), log_path):
         pass
 
 
@@ -28,7 +27,7 @@ def main():
         log_directory.mkdir(parents=True, exist_ok=True)
 
         # Use a process pool for parallelization
-        with ProcessPoolExecutor(max_workers=multiprocessing.cpu_count() // 2) as executor:
+        with ProcessPoolExecutor(max_workers=multiprocessing.cpu_count() // 4) as executor:
             # Submit graph tasks for parallel processing
             futures = [
                 executor.submit(process_graph, graph_path, length_bound, log_directory)

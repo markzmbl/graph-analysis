@@ -15,6 +15,9 @@ def iteration_logging(generator, log_path: Path, log_interval=1) -> None:
     Args:
         generator (iterable): The generator that yields the items to iterate over.
         log_interval (int): The time interval in seconds to log progress.
+        :param log_interval:
+        :param generator:
+        :param log_path:
     """
     # Initialize timing details
     start_time = time.time()  # Record the starting time
