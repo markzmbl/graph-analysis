@@ -3,14 +3,16 @@ import pickle
 import networkx as nx
 from tqdm import tqdm
 
-from utils import iteration_logging
+from utils import iteration_logging, get_drive
 from pathlib import Path
 
-graph_paths = sorted((p for p in Path("16TB/graphs").iterdir() if p.suffix == ".pickle"),
+drive = get_drive()
+
+graph_paths = sorted((p for p in (drive / "graphs").iterdir() if p.suffix == ".pickle"),
                      key=lambda x: x.stem.split("__")[-1])
 
 for length_bound in (3, 5, 7):
-    log_directory = Path(f"../16TB/simple_cycles/{length_bound}")
+    log_directory = drive / f"/simple_cycles/{length_bound}"
     log_directory.mkdir(parents=True, exist_ok=True)
     for graph_path in tqdm(graph_paths, desc=f"{length_bound=}"):
         log_path = log_directory / f"{graph_path.stem}.csv"

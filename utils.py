@@ -3,7 +3,11 @@ import psutil
 from pathlib import Path
 
 
-def iteration_logging(generator, log_path: Path, log_interval=1):
+def get_drive() -> Path:
+    return Path("16TB")
+
+
+def iteration_logging(generator, log_path: Path, log_interval=1) -> None:
     """
     Tracks iterations over a generator and logs progress every log_interval seconds,
     along with memory usage of the program.
