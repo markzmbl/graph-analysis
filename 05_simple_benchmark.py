@@ -12,7 +12,7 @@ graph_paths = sorted((p for p in (drive / "graphs").iterdir() if p.suffix == ".p
                      key=lambda x: x.stem.split("__")[-1])
 
 for length_bound in (3, 5, 7):
-    log_directory = drive / f"/simple_cycles/{length_bound}"
+    log_directory = drive / f"simple_cycles/{length_bound}"
     log_directory.mkdir(parents=True, exist_ok=True)
     for graph_path in tqdm(graph_paths, desc=f"{length_bound=}"):
         log_path = log_directory / f"{graph_path.stem}.csv"
