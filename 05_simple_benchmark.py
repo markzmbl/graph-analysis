@@ -6,7 +6,7 @@ from tqdm import tqdm
 from utils import iteration_logging
 from pathlib import Path
 
-graph_paths = sorted((p for p in Path("../16TB/graphs").iterdir() if p.suffix == ".pickle"),
+graph_paths = sorted((p for p in Path("16TB/graphs").iterdir() if p.suffix == ".pickle"),
                      key=lambda x: x.stem.split("__")[-1])
 
 for length_bound in (3, 5, 7):
