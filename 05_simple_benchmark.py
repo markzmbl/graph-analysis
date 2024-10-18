@@ -19,5 +19,5 @@ for length_bound in (3, 5, 7):
         with graph_path.open("rb") as graph_file:
             graph = pickle.load(graph_file)
         for cycle in tqdm(iteration_logging(nx.simple_cycles(graph, length_bound=length_bound), log_path),
-                          desc=graph.stem):
+                          desc=graph_path.stem):
             pass
