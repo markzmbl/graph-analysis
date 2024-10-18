@@ -28,7 +28,7 @@ def main():
         log_directory.mkdir(parents=True, exist_ok=True)
 
         # Use a process pool for parallelization
-        with ProcessPoolExecutor(max_workers=multiprocessing.cpu_count()) as executor:
+        with ProcessPoolExecutor(max_workers=multiprocessing.cpu_count() // 2) as executor:
             # Submit graph tasks for parallel processing
             futures = [
                 executor.submit(process_graph, graph_path, length_bound, log_directory)
