@@ -31,9 +31,8 @@ def main():
         log_directory = length_bound_directory / "logs"
         cycles_directory = length_bound_directory / "cycles"
 
-        length_bound_directory.mkdir()
-        log_directory.mkdir()
-        cycles_directory.mkdir()
+        log_directory.mkdir(parents=True, exist_ok=True)
+        cycles_directory.mkdir(parents=True, exist_ok=True)
 
         # Use a process pool for parallelization
         with ProcessPoolExecutor(max_workers=multiprocessing.cpu_count() // 4) as executor:
