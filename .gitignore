@@ -1,10 +1,12 @@
 __pycache__
 .DS_Store
-.idea
+**/.idea
 
-venv
+.venv
 16TB
 graphs
 *.pickle
 *.csv
+CycleDetection/dataset
+CycleDetection/cmake-build-debug
 *.png
