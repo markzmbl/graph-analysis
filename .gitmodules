@@ -1,0 +1,3 @@
+[submodule "CycleDetection"]
+	path = CycleDetection
+	url = https://github.com/markzmbl/CycleDetection.git
