@@ -2,8 +2,9 @@ import pickle
 import networkx as nx
 from utils import get_graph_paths, read_graph
 from tqdm import tqdm
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 import multiprocessing
+from functools import partial
 
 
 def load_node_mapping(file_path):
@@ -19,19 +20,16 @@ def process_graph(graph_path, node_mapping):
     Processes a single graph file.
     """
     graph = read_graph(graph_path)
-    print("read graph")
     edge_list = nx.to_pandas_edgelist(graph, edge_key="time")
-    print("generated edge list")
 
-    # Apply mapping for source and target using the read-only node_mapping
-    edge_list["source_mapping"] = edge_list["source"].map(node_mapping)
-    print("mapped source")
-    edge_list["target_mapping"] = edge_list["target"].map(node_mapping)
-    print("mapped target")
+    # Apply mapping for source and target using the shared node_mapping
+    edge_list["source_mapping"] = edge_list["source"].map(lambda x: node_mapping.get(x))
+    edge_list["target_mapping"] = edge_list["target"].map(lambda x: node_mapping.get(x))
 
     edge_list.rename(
         inplace=True,
         columns={
+            "id": "edge_id",
             "source": "source_id",
             "target": "target_id",
             "source_mapping": "source",
@@ -39,25 +37,26 @@ def process_graph(graph_path, node_mapping):
         },
     )
     graph = nx.from_pandas_edgelist(
-        edge_list, create_using=nx.MultiDiGraph, edge_attr=True, edge_key="time"
+        edge_list, create_using=nx.MultiDiGraph, edge_attr=["edge_id", "source_id", "target_id", "value"], edge_key="time"
     )
-    print("created new graph")
     with graph_path.open("wb") as f:
         pickle.dump(graph, f)
-        print("saved graph")
 
 
 def main():
-    # Load the read-only node mapping once
-    node_mapping = load_node_mapping("node_ids.txt")
+    # Use a multiprocessing manager to create a shared dictionary
+    manager = multiprocessing.Manager()
+    node_mapping = manager.dict(load_node_mapping("node_ids.txt"))
 
     graph_paths = get_graph_paths()
-    # Set max_workers to the number of CPU cores
     num_workers = multiprocessing.cpu_count() // 2
 
-    with ThreadPoolExecutor(max_workers=num_workers) as executor:
-        # Use partial function application to pass node_mapping as a fixed argument
-        list(tqdm(executor.map(lambda gp: process_graph(gp, node_mapping), graph_paths), total=len(graph_paths)))
+    # Create a partial function to fix the node_mapping argument
+    process_graph_with_mapping = partial(process_graph, node_mapping=node_mapping)
+
+    with ProcessPoolExecutor(max_workers=num_workers) as executor:
+        # Map over the graph paths only since node_mapping is fixed
+        list(tqdm(executor.map(process_graph_with_mapping, graph_paths), total=len(graph_paths)))
 
 
 if __name__ == "__main__":
