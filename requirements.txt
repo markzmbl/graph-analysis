@@ -5,6 +5,8 @@ networkx==3.3.0
 networkx-temporal==1.0rc1
 numpy==2.1.1
 tqdm==4.66.5
-
+pydantic==2.9.2
 pandas~=2.2.3
 psutil~=6.1.0
+plotly==5.24.1
+ipython~=8.29.0
