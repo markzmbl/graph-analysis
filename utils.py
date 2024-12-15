@@ -12,11 +12,13 @@ import networkx as nx
 import numpy as np
 import psutil
 from pathlib import Path
-from typing import Generator, Iterable, Any
+from typing import Generator, Iterable, Any, Hashable
 
 from IPython.core.display_functions import display
 from pydantic.alias_generators import to_camel
 from setuptools.config.pyprojecttoml import load_file
+from sortedcontainers import SortedList
+from sympy import Interval
 from tqdm.auto import tqdm
 import plotly.graph_objects as go
 
@@ -66,10 +68,10 @@ def get_graph_paths(
 
 class GraphEdgeIterator:
     def __init__(
-        self,
-        start_date: date | str | None = None,
-        end_date: date | str | None = None,
-        buffer_count: int = 2,  # Number of graph buffers
+            self,
+            start_date: date | str | None = None,
+            end_date: date | str | None = None,
+            buffer_count: int = 2,  # Number of graph buffers
     ):
         # Iterator over file paths
         self.graph_path_iterator = iter(get_graph_paths(start_date=start_date, end_date=end_date))
@@ -102,7 +104,8 @@ class GraphEdgeIterator:
     def __next__(self):
         try:
             # Try to get the next edge from the current graph's edges
-            return next(self.current_edges)
+            u, v, current_time = next(self.current_edges)
+            return u, v, current_time
         except StopIteration:
             # Current graph is exhausted
             if all(buf is None for buf in self.buffer):
@@ -122,16 +125,92 @@ class GraphEdgeIterator:
             self._trigger_buffer(self.buffer_count - 1)
 
             # Retry to get the next edge
-            return next(self.current_edges)
+            return next(self)
+
+
+class GraphCycleIterator:
+    def __init__(
+            self,
+            edge_iterator: Iterator[tuple[Hashable, Hashable, int]],
+            omega: int = 10,
+            prune_interval: int = 1_000
+    ):
+        self.edge_iterator = edge_iterator
+        self.iteration_count = 0
+        self.prune_interval = prune_interval
+
+        # Graph Reverse Reachability
+        self.omega = omega
+        self.reverse_reachability = {}
+
+        # Candidate Seeds
+
+        def seed_sort_key(edge):
+            v, start, end, _ = edge
+            return v, start, -end
+
+        self.seeds = SortedList(key=seed_sort_key)
+
+    def _prune_reverse_reachability_set(self, vertex, current_time):
+        self.reverse_reachability[vertex] = {
+            (x, time_x) for x, time_x in self.reverse_reachability[vertex]
+            if time_x > current_time - self.omega
+        }
+
+    def _update_reverse_reachability(self, u, v, current_time_u):
+        # Ignore trivial self edges
+        if u == v:
+            return
+
+        # Initialization of empty set if necessary
+        self.reverse_reachability.setdefault(v, set())
+
+        self.reverse_reachability[v].add((u, current_time_u))
+        if u in self.reverse_reachability:
+            # Prune old edges of u's reverse reachability
+            self._prune_reverse_reachability_set(u, current_time_u)
+
+            # Update: because (u, v) exists, all reachable to u are also reachable to v
+            self.reverse_reachability[v].update(self.reverse_reachability[u])
+            to_delete = set()
+            for w, time_w in self.reverse_reachability[u]:
+                if w == v:
+                    candidates = {c for c, time_c in self.reverse_reachability[u] if time_c > time_w}
+                    if len(candidates) > 0:
+                        # TODO: Algorithm 3 Combining Root Node Candidate
+                        self.seeds.add((w, time_w, current_time_u, candidates))
+                        # interval_w = Interval(time_w, current_time_u)
+                        # self.seeds.setdefault(w, {})
+                        # for interval in self.seeds[w]:
+                        #     if interval_w.is_subset(interval):
+                        #         self.seeds[w][interval].update(candidates)
+                        #         break
+                        # else:
+                        #     self.seeds[w][interval_w] = candidates
+                    to_delete.add((w, time_w))
+            self.reverse_reachability[u].difference_update(to_delete)
+
+    def __iter__(self):
+        return self
+
+    def run(self):
+        for u, v, current_time in self.edge_iterator:
+            self.iteration_count += 1
+            self._update_reverse_reachability(u, v, current_time)
+
+            # Cleanup of old edges
+            if self.iteration_count % self.prune_interval == 0:
+                for w in self.reverse_reachability:
+                    self._prune_reverse_reachability_set(w, current_time)
 
 
 def iteration_logging(
-    generator: Iterable[Any],
-    log_interval: int = 1,
-    max_time: int = 60 * 60,
-    log_stream: io.IOBase | None = None,
-    progress_bar: bool = False,
-    plot: bool = False,
+        generator: Iterable[Any],
+        log_interval: int = 1,
+        max_time: int = 60 * 60,
+        log_stream: io.IOBase | None = None,
+        progress_bar: bool = False,
+        plot: bool = False,
 ) -> Generator[Any, None, None]:
     # Wrap generator with progress bar if needed
     wrapped_generator = tqdm(generator) if progress_bar else generator
@@ -139,12 +218,11 @@ def iteration_logging(
     # Initialize figures
     figures = {}
     if plot:
-        def create_figure_widget(name: str, xaxis_title: str, yaxis_title: str) -> go.FigureWidget:
+        def create_figure_widget(name: str, yaxis_title: str) -> go.FigureWidget:
             figure = go.FigureWidget()
             figure.add_trace(go.Scatter(name=name, mode="lines"))
             figure.update_layout(
-                xaxis_title=xaxis_title,
-                # xaxis=dict(tickmode='linear', dtick=1),
+                xaxis_title="seconds",
                 yaxis_title=yaxis_title,
             )
             figure.data[0].x = []
@@ -152,9 +230,9 @@ def iteration_logging(
             return figure
 
         figures = {
-            "iterations": create_figure_widget("Iterations", "seconds", "iterations"),
-            "rate": create_figure_widget("Iteration rate", "seconds", "iteration rate"),
-            "memory": create_figure_widget("Memory usage", "seconds", "memory usage (GB)"),
+            "iterations": create_figure_widget("Iterations", "iterations"),
+            "rate": create_figure_widget("Iteration rate", "iteration rate"),
+            "memory": create_figure_widget("Memory usage", "memory usage (GB)"),
         }
 
         # Display figures initially
@@ -211,131 +289,41 @@ def iteration_logging(
         yield item  # Yield the current item for iteration flow
 
 
-def parse_arguments(**kwargs) -> argparse.Namespace:
-    """Parse and return command-line arguments."""
-    parser = argparse.ArgumentParser(description="Cycle Detection in Temporal Graphs (v0.1)")
-
-    # Convert kwargs into a list of command-line arguments
-    simulated_args = []
-    for key, value in kwargs.items():
-        key = key.replace("_", "-")
-        if isinstance(value, bool) and value:  # Handle flags (true means the flag is present)
-            simulated_args.append(f"--{key}")
-        elif not isinstance(value, bool):  # Handle arguments with values
-            simulated_args.extend([f"--{key}", str(value)])
-
-    # Optional arguments with defaults
-    parser.add_argument(
-        "-f", "--root-file-arg", type=str, default="NA",
-        help="Path of the root file (default: NA)."
-    )
-    parser.add_argument(
-        "-e", "--projected-element-count", type=int, default=1000,
-        help="Projected element count (default: 1000)."
-    )
-    parser.add_argument(
-        "-w", "--window", type=int, default=1,
-        help="Time window in hours (default: 1)."
-    )
-    parser.add_argument(
-        "-p", "--clean-up-limit", type=int, default=10000,
-        help="Clean up size (default: 10000)."
-    )
-    parser.add_argument(
-        "-a", "--root-algo", type=int, default=1,
-        help="Algorithm to find root (0 for old, 1 for new, default: 1)."
-    )
-    parser.add_argument(
-        "-r", "--reverse-direction", action="store_true",
-        help="Reverse direction of edge (default: False)."
-    )
-    parser.add_argument(
-        "-z", "--is-compressed", action="store_true",
-        help="Indicate if the root node is compressed (default: False)."
-    )
-    parser.add_argument(
-        "-c", "--is-candidates-provided", action="store_true",
-        help="Indicate if a candidate list is provided (default: True)."
-    )
-    parser.add_argument(
-        "-l", "--cycle-length", type=int, default=80,
-        help="Cycle length (default: 80)."
-    )
-    parser.add_argument(
-        "-b", "--use-bundle", action="store_true",
-        help="Use bundle (default: False)."
-    )
-
-    # New arguments: start_date and end_date
-    parser.add_argument(
-        "--start-date", type=parse_date, default=None,
-        help="Start date in format YYYY-MM-DD (default: None)."
-    )
-    parser.add_argument(
-        "--end-date", type=parse_date, default=None,
-        help="End date in format YYYY-MM-DD (default: None)."
-    )
-
-    # Use simulated_args instead of args
-    return parser.parse_args(simulated_args)
-
-
-def to_cli_arguments(args: argparse.Namespace) -> list[str]:
-    """
-    Convert argparse.Namespace to a list of CLI arguments.
-    Handles flags (boolean arguments) correctly.
-    """
-    del args.start_date, args.end_date,
-    cli_arguments = []
-    for key, value in vars(args).items():
-        key = key.replace("_", "-")
-        if isinstance(value, bool):  # Handle flags
-            if value:  # Include flag only if True
-                cli_arguments.append(f"--{key}")
-        elif value is not None:  # Handle arguments with values
-            cli_arguments.extend([f"--{key}", str(value)])
-    return cli_arguments
-
-
 def generate_seeds(edges, omega, prune_interval=1_000):
-    """
+    reachability = {}  # Summaries for each vertex
 
-    :param edges:
-    :param omega:
-    :param prune_interval:
-    :return: All vertexs s, time stamps t_start and t_end, and a candidates set such that there exists a loop from s to s
-        using only vertexs in C starting at t_start and ending at t_end
-    """
-    S = {}  # Summaries for each vertex
-
-    for i, (a, b, t) in enumerate(edges):
-        if a == b:
+    for i, (u, v, time_u) in enumerate(edges):
+        # Trivial self edges are ignored
+        if u == v:
             continue
 
-        # Ensure S(b) exists
-        if b not in S:
-            S[b] = set()
-        # Add (a, t) to S(b)
-        S[b].add((a, t))
+        if v not in reachability:
+            # Initialization of empty set if necessary
+            reachability[v] = set()
 
-        if a in S:
-            # Prune outdated entries from S(a)
-            S[a] = {(x, tx) for (x, tx) in S[a] if tx > t - omega}
-            # Update S(b) with entries from S(a)
-            S[b].update(S[a])
+        # Update: v is reachable by u at current_time t
+        reachability[v].add((u, time_u))
+
+        # Check the reachability of u
+        if u in reachability:
+
+            reachability[u] = {(w, time_w) for w, time_w in reachability[u] if time_w > time_u - omega}
+            # Update: reachability(v) with entries from reachability(u)
+            reachability[v].update(reachability[u])
 
             # Iterate over copies to avoid modification issues
-            for vertex_b, tb in list(S[b]):
-                if vertex_b == b:
-                    # Construct candidates C
-                    candidates = {c for (c, tc) in S[a] if tc > tb}
-                    candidates.add(b)
-                    # Output the seed
-                    yield b, (tb, t), candidates
-                    # Remove (b, tb) from S(b)
-                    S[b].remove((b, tb))
+            for vertex_b, tb in list(reachability[v]):
+                if vertex_b == v:
+                    if tb < time_u:
+                        # Construct candidates C
+                        candidates = {c for (c, tc) in reachability[u] if tc > tb}
+                        candidates.add(v)
+                        # Output the seed
+                        yield v, (tb, time_u), candidates
+                    # Remove (v, tb) from reachability(v)
+                    reachability[v].remove((v, tb))
 
         # Time to prune all summaries
         if i % prune_interval == 0:
-            for vertex in S:
-                S[vertex] = {(y, ty) for (y, ty) in S[vertex] if ty > t - omega}
+            for vertex in reachability:
+                reachability[vertex] = {(w, time_w) for w, time_w in reachability[vertex] if time_w > time_u - omega}
