@@ -173,9 +173,9 @@ def simple_temporal_cycles(G: nx.MultiDiGraph, length_bound=None, temporal_bound
 
     Notes
     -----
-    When length_bound is None, the time complexity is $O((n+e)(c+1))$ for $n$
+    When length_bound is None, the current_time complexity is $O((n+e)(c+1))$ for $n$
     nodes, $e$ edges and $c$ simple circuits.  Otherwise, when length_bound > 1,
-    the time complexity is $O((c+n)(k-1)d^k)$ where $d$ is the average degree of
+    the current_time complexity is $O((c+n)(k-1)d^k)$ where $d$ is the average degree of
     the nodes of G and $k$ = length_bound.
 
     Raises
