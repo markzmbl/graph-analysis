@@ -1,8 +1,10 @@
+from __future__ import annotations
 import argparse
 import io
 import pickle
 import sys
 import time
+from collections import defaultdict
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, Future
 from contextlib import nullcontext
@@ -17,8 +19,8 @@ from typing import Generator, Iterable, Any, Hashable
 from IPython.core.display_functions import display
 from pydantic.alias_generators import to_camel
 from setuptools.config.pyprojecttoml import load_file
-from sortedcontainers import SortedList
-from sympy import Interval
+from sortedcontainers import SortedList, SortedDict
+from sympy import Interval, FiniteSet, EmptySet
 from tqdm.auto import tqdm
 import plotly.graph_objects as go
 
@@ -96,7 +98,7 @@ class GraphEdgeIterator:
 
     def _resolve_buffer(self, index):
         """Wait for the graph to load and set the current edges iterator."""
-        self.current_edges = iter(self.buffer[index].result().edges)
+        self.current_edges = iter(sorted(self.buffer[index].result().edges, key=lambda e: e[2]))  # sort by key (time)
 
     def __iter__(self):
         return self
@@ -128,6 +130,17 @@ class GraphEdgeIterator:
             return next(self)
 
 
+def interval_sort_key(interval: Interval):
+    if isinstance(interval, FiniteSet):
+        start = end = next(iter(interval))  # type: ignore
+    elif isinstance(interval, Interval):
+        start, end = interval.start, -interval.end
+    else:
+        raise RuntimeError(f"Unexpected interval type: {type(interval)}")
+    # First sort Start ascending, then End descending
+    return float(start), float(end)
+
+
 class GraphCycleIterator:
     def __init__(
             self,
@@ -141,54 +154,68 @@ class GraphCycleIterator:
 
         # Graph Reverse Reachability
         self.omega = omega
-        self.reverse_reachability = {}
+        self.reverse_reachability = defaultdict(set)
 
         # Candidate Seeds
 
-        def seed_sort_key(edge):
-            v, start, end, _ = edge
-            return v, start, -end
+        self.seeds = defaultdict(lambda: SortedDict(interval_sort_key))
 
-        self.seeds = SortedList(key=seed_sort_key)
-
-    def _prune_reverse_reachability_set(self, vertex, current_time):
+    def _prune_reverse_reachability_set(self, vertex, current_time_lower_limit):
         self.reverse_reachability[vertex] = {
             (x, time_x) for x, time_x in self.reverse_reachability[vertex]
-            if time_x > current_time - self.omega
+            if time_x > current_time_lower_limit
         }
 
-    def _update_reverse_reachability(self, u, v, current_time_u):
+    def _update_reverse_reachability(self, u, v, current_time):
         # Ignore trivial self edges
         if u == v:
             return
 
-        # Initialization of empty set if necessary
-        self.reverse_reachability.setdefault(v, set())
+        lower_time_limit = current_time - self.omega
+        self.reverse_reachability[v].add((u, current_time))
 
-        self.reverse_reachability[v].add((u, current_time_u))
         if u in self.reverse_reachability:
             # Prune old edges of u's reverse reachability
-            self._prune_reverse_reachability_set(u, current_time_u)
-
+            self._prune_reverse_reachability_set(u, lower_time_limit)
             # Update: because (u, v) exists, all reachable to u are also reachable to v
+            # TODO: first combine rr[u] after loop, then union, then combine rr[v]
             self.reverse_reachability[v].update(self.reverse_reachability[u])
             to_delete = set()
             for w, time_w in self.reverse_reachability[u]:
                 if w == v:
                     candidates = {c for c, time_c in self.reverse_reachability[u] if time_c > time_w}
                     if len(candidates) > 0:
-                        # TODO: Algorithm 3 Combining Root Node Candidate
-                        self.seeds.add((w, time_w, current_time_u, candidates))
-                        # interval_w = Interval(time_w, current_time_u)
-                        # self.seeds.setdefault(w, {})
-                        # for interval in self.seeds[w]:
-                        #     if interval_w.is_subset(interval):
-                        #         self.seeds[w][interval].update(candidates)
-                        #         break
-                        # else:
-                        #     self.seeds[w][interval_w] = candidates
-                    to_delete.add((w, time_w))
+                        interval_w = Interval(time_w, current_time)
+                        self.seeds[v][interval_w] = candidates
+                    to_delete.add((v, time_w))
             self.reverse_reachability[u].difference_update(to_delete)
+
+    def _combine_seeds(self, v):
+        seeds = self.seeds[v]
+        seed_intervals = list(seeds.keys())
+        combined_seeds = SortedDict(interval_sort_key)
+        while seed_intervals:
+            first_interval_start = seed_intervals[0].start
+            upper_time_limit = first_interval_start + self.omega
+
+            prefix_end_index = 0
+            for prefix_end_index, interval in enumerate(seed_intervals):
+                if interval.end > upper_time_limit:
+                    break
+
+            prefix = self.seeds[: prefix_end_index]
+            seed_intervals = seed_intervals[prefix_end_index + 1 :]
+
+            if not seed_intervals:
+                combined_interval_end = upper_time_limit
+            else:
+                combined_interval_end = next(iter(seed_intervals)).start
+            # TODO: Do I need max_prefix_time?
+            prefix_max_time = max(interval.end for interval in prefix)
+
+            combined_candidates = set.union(*[seeds[interval] for interval in prefix])
+
+            combined_seeds[Interval(first_interval_start, combined_interval_end)] = combined_candidates
 
     def __iter__(self):
         return self
@@ -197,11 +224,11 @@ class GraphCycleIterator:
         for u, v, current_time in self.edge_iterator:
             self.iteration_count += 1
             self._update_reverse_reachability(u, v, current_time)
-
+            self._combine_seeds(v)
             # Cleanup of old edges
             if self.iteration_count % self.prune_interval == 0:
                 for w in self.reverse_reachability:
-                    self._prune_reverse_reachability_set(w, current_time)
+                    self._prune_reverse_reachability_set(w, current_time - self.omega)
 
 
 def iteration_logging(
@@ -287,43 +314,3 @@ def iteration_logging(
             last_log_time = current_time
 
         yield item  # Yield the current item for iteration flow
-
-
-def generate_seeds(edges, omega, prune_interval=1_000):
-    reachability = {}  # Summaries for each vertex
-
-    for i, (u, v, time_u) in enumerate(edges):
-        # Trivial self edges are ignored
-        if u == v:
-            continue
-
-        if v not in reachability:
-            # Initialization of empty set if necessary
-            reachability[v] = set()
-
-        # Update: v is reachable by u at current_time t
-        reachability[v].add((u, time_u))
-
-        # Check the reachability of u
-        if u in reachability:
-
-            reachability[u] = {(w, time_w) for w, time_w in reachability[u] if time_w > time_u - omega}
-            # Update: reachability(v) with entries from reachability(u)
-            reachability[v].update(reachability[u])
-
-            # Iterate over copies to avoid modification issues
-            for vertex_b, tb in list(reachability[v]):
-                if vertex_b == v:
-                    if tb < time_u:
-                        # Construct candidates C
-                        candidates = {c for (c, tc) in reachability[u] if tc > tb}
-                        candidates.add(v)
-                        # Output the seed
-                        yield v, (tb, time_u), candidates
-                    # Remove (v, tb) from reachability(v)
-                    reachability[v].remove((v, tb))
-
-        # Time to prune all summaries
-        if i % prune_interval == 0:
-            for vertex in reachability:
-                reachability[vertex] = {(w, time_w) for w, time_w in reachability[vertex] if time_w > time_u - omega}
