@@ -7,6 +7,8 @@ __pycache__
 graphs
 *.pickle
 *.csv
-CycleDetection/dataset
-CycleDetection/cmake-build-debug
+CycleDetection
 *.png
+
+node_ids.pickle
+node_ids.txt
