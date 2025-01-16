@@ -4,7 +4,8 @@ import io
 import pickle
 import sys
 import time
-from collections import defaultdict
+from bisect import bisect_right
+from collections import defaultdict, deque
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, Future
 from contextlib import nullcontext
@@ -130,18 +131,20 @@ class GraphEdgeIterator:
             return next(self)
 
 
-def interval_sort_key(interval: Interval):
-    if isinstance(interval, FiniteSet):
-        start = end = next(iter(interval))  # type: ignore
-    elif isinstance(interval, Interval):
-        start, end = interval.start, -interval.end
-    else:
-        raise RuntimeError(f"Unexpected interval type: {type(interval)}")
-    # First sort Start ascending, then End descending
-    return float(start), float(end)
 
 
 class GraphCycleIterator:
+    @staticmethod
+    def _interval_sort_key(interval: Interval):
+        if isinstance(interval, FiniteSet):
+            start = end = next(iter(interval))  # type: ignore
+        elif isinstance(interval, Interval):
+            start, end = interval.start, -interval.end
+        else:
+            raise RuntimeError(f"Unexpected interval type: {type(interval)}")
+        # First sort Start ascending, then End descending
+        return float(start), float(end)
+
     def __init__(
             self,
             edge_iterator: Iterator[tuple[Hashable, Hashable, int]],
@@ -157,8 +160,9 @@ class GraphCycleIterator:
         self.reverse_reachability = defaultdict(set)
 
         # Candidate Seeds
+        self.seeds = defaultdict(lambda: SortedDict(self._interval_sort_key))
 
-        self.seeds = defaultdict(lambda: SortedDict(interval_sort_key))
+
 
     def _prune_reverse_reachability_set(self, vertex, current_time_lower_limit):
         self.reverse_reachability[vertex] = {
@@ -191,31 +195,59 @@ class GraphCycleIterator:
             self.reverse_reachability[u].difference_update(to_delete)
 
     def _combine_seeds(self, v):
+        # 1) seeds[v] and seed_intervals are sorted by (start ascending) and (end descending)
+        #    i.e. for the same start, place later end first.
         seeds = self.seeds[v]
-        seed_intervals = list(seeds.keys())
-        combined_seeds = SortedDict(interval_sort_key)
-        while seed_intervals:
+        if not seeds:
+            return
+
+        seed_intervals = deque(seeds.keys())  # Convert to deque for efficient front operations
+        combined_seeds = SortedDict(self._interval_sort_key)  # Maintain sorted order efficiently
+
+        # Cache for combined candidates to avoid redundant calculations
+        combined_cache = {}
+
+        # 2) While there are multiple seeds remaining
+        while len(seed_intervals) > 1:
+            if any(i.end != seed_intervals[-1].end for i in seed_intervals):
+                print(1)
+            # 3) Let first_interval_start be the first interval start in seed_intervals
             first_interval_start = seed_intervals[0].start
+
+            # 4) Find the maximal prefix of seed_intervals satisfying t < start + omega
             upper_time_limit = first_interval_start + self.omega
 
-            prefix_end_index = 0
-            for prefix_end_index, interval in enumerate(seed_intervals):
-                if interval.end > upper_time_limit:
-                    break
+            # Use binary search to find the prefix end index
+            end_times = [interval.end for interval in seed_intervals]
+            prefix_end_index = bisect_right(end_times, upper_time_limit)
 
-            prefix = self.seeds[: prefix_end_index]
-            seed_intervals = seed_intervals[prefix_end_index + 1 :]
+            # Extract the prefix intervals and update seed_intervals efficiently
+            prefix = [seed_intervals.popleft() for _ in range(prefix_end_index)]
 
+            # 5) Determine combined_interval_end
             if not seed_intervals:
+                # If seed_intervals is empty, combined_interval_end = start + omega
                 combined_interval_end = upper_time_limit
             else:
-                combined_interval_end = next(iter(seed_intervals)).start
-            # TODO: Do I need max_prefix_time?
-            prefix_max_time = max(interval.end for interval in prefix)
+                # Else take the start from the new first seed in seed_intervals
+                combined_interval_end = seed_intervals[0].start
 
-            combined_candidates = set.union(*[seeds[interval] for interval in prefix])
+            # 6) Combine candidates from the prefix
+            combined_candidates = set()
+            prefix_max_time = 0
+            for interval in prefix:
+                if interval not in combined_cache:
+                    # Otherwise, calculate and cache
+                    combined_cache[interval] = seeds[interval]
+                    combined_candidates.update(seeds[interval])
+                # Update the maximum end time
+                prefix_max_time = max(prefix_max_time, interval.end)
 
+            # 7) Output a combined tuple
             combined_seeds[Interval(first_interval_start, combined_interval_end)] = combined_candidates
+
+        # 8) Replace seeds by combined seeds
+        self.seeds[v] = combined_seeds
 
     def __iter__(self):
         return self
