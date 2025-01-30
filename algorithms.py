@@ -10,7 +10,7 @@ def _bounded_cycle_search(G, path, length_bound, temporal_bound):
     Parameters
     ----------
     G : NetworkX Graph or DiGraph
-       A graph
+       A dynamic_graph
 
     path : list
        A cycle prefix.  All cycles generated will begin with this prefix.
@@ -88,7 +88,7 @@ def _directed_cycle_search(G, length_bound, temporal_bound):
     Parameters
     ----------
     G : NetworkX DiGraph
-       A directed graph
+       A directed dynamic_graph
 
     length_bound : int or None
        If length_bound is an int, generate all simple cycles of G with length at most length_bound.
@@ -113,11 +113,11 @@ def _directed_cycle_search(G, length_bound, temporal_bound):
 
 
 def simple_temporal_cycles(G: nx.MultiDiGraph, length_bound=None, temporal_bound=None):
-    """Find simple cycles (elementary circuits) of a graph.
+    """Find simple cycles (elementary circuits) of a dynamic_graph.
 
     A `simple cycle`, or `elementary circuit`, is a closed path where
-    no node appears twice.  In a directed graph, two simple cycles are distinct
-    if they are not cyclic permutations of each other.  In an undirected graph,
+    no node appears twice.  In a directed dynamic_graph, two simple cycles are distinct
+    if they are not cyclic permutations of each other.  In an undirected dynamic_graph,
     two simple cycles are distinct if they are not cyclic permutations of each
     other nor of the other's reversal.
 
@@ -139,12 +139,12 @@ def simple_temporal_cycles(G: nx.MultiDiGraph, length_bound=None, temporal_bound
     multigraphs, a pair of parallel edges is considered a cycle of length 2.
     Likewise, self-loops are considered to be cycles of length 1.  We define
     cycles as sequences of nodes; so the presence of loops and parallel edges
-    does not change the number of simple cycles in a graph.
+    does not change the number of simple cycles in a dynamic_graph.
 
     Parameters
     ----------
     G : NetworkX DiGraph
-       A directed graph
+       A directed dynamic_graph
 
     length_bound : int or None, optional (default=None)
        If length_bound is an int, generate all simple cycles of G with length at
@@ -163,7 +163,7 @@ def simple_temporal_cycles(G: nx.MultiDiGraph, length_bound=None, temporal_bound
     [[0], [0, 1, 2], [0, 2], [1, 2], [2]]
 
     To filter the cycles so that they don't include certain nodes or edges,
-    copy your graph and eliminate those nodes or edges before calling.
+    copy your dynamic_graph and eliminate those nodes or edges before calling.
     For example, to exclude self-loops from the above example:
 
     >>> H = G.copy()
@@ -185,14 +185,14 @@ def simple_temporal_cycles(G: nx.MultiDiGraph, length_bound=None, temporal_bound
 
     References
     ----------
-    .. [1] Finding all the elementary circuits of a directed graph.
+    .. [1] Finding all the elementary circuits of a directed dynamic_graph.
        D. B. Johnson, SIAM Journal on Computing 4, no. 1, 77-84, 1975.
        https://doi.org/10.1137/0204007
     .. [2] Finding All Bounded-Length Simple Cycles in a Directed Graph
        A. Gupta and T. Suzumura https://arxiv.org/abs/2105.10094
     .. [3] Enumerating the cycles of a digraph: a new preprocessing strategy.
        G. Loizou and P. Thanish, Information Sciences, v. 27, 163-182, 1982.
-    .. [4] A search strategy for the elementary cycles of a directed graph.
+    .. [4] A search strategy for the elementary cycles of a directed dynamic_graph.
        J.L. Szwarcfiter and P.E. Lauer, BIT NUMERICAL MATHEMATICS,
        v. 16, no. 2, 192-204, 1976.
     .. [5] Optimal Listing of Cycles and st-Paths in Undirected Graphs

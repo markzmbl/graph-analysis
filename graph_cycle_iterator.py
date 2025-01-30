@@ -1,15 +1,20 @@
 from collections import defaultdict
+from numbers import Number
 from typing import Iterator, Hashable, Set
-from sortedcontainers import SortedDict  # third-party library
-from sympy import Interval, FiniteSet
 
+from intervaltree import IntervalTree, Interval
+from sortedcontainers import SortedDict  # third-party library
+
+import dynetx as dn
+class Candidates(set):
+    next_begin: Number | None = None
 
 class GraphCycleIterator:
     """
     Implements a core data structure and methods inspired by the 2SCENT (2-Source
     Cycle Enumeration in Near-real Time) algorithm described by Kumar and Calders.
 
-    The goal is to track possible temporal cycles in a graph stream by maintaining
+    The goal is to track possible temporal cycles in a dynamic_graph stream by maintaining
     reverse reachability sets and "seed" intervals. A newly arrived edge at time t
     can connect previously reachable vertices to form cycles. We keep track of these
     potential cycles in an efficient manner by storing and merging intervals.
@@ -32,7 +37,7 @@ class GraphCycleIterator:
         A dictionary mapping each vertex to a set of (predecessor, time) pairs,
         indicating that `predecessor` can reach this vertex at a particular time.
     seeds : defaultdict
-        A dictionary mapping each vertex to a sorted collection (SortedDict)
+        A dictionary mapping each vertex to a sorted collection (IntervalTree)
         of intervals -> candidate sets. Each interval captures a time range where
         a set of vertices might form cycles with that vertex.
 
@@ -44,42 +49,6 @@ class GraphCycleIterator:
       to maintain intervals in a sorted structure.
     - The `sympy` library is used to handle intervals (`Interval`, `FiniteSet`).
     """
-
-    @staticmethod
-    def _interval_sort_key(interval: Interval):
-        """
-        Returns a sort key tuple (start, -end) for an Interval or a FiniteSet.
-
-        Parameters
-        ----------
-        interval : Interval or FiniteSet
-            The interval or finite set to be converted into a sort key.
-            - If interval is a FiniteSet, we take the single element as both
-              start and end.
-            - If interval is a standard sympy Interval, we take:
-                - start = interval.start
-                - end = -interval.end  (the negative is used to sort intervals
-                  by descending end time in case of a tie)
-
-        Raises
-        ------
-        RuntimeError
-            If the provided interval is not of a recognized type.
-
-        Returns
-        -------
-        tuple
-            A 2-tuple (start, end) to be used as a sorting key, where 'end'
-            is negated to sort descending by actual end value.
-        """
-        if isinstance(interval, FiniteSet):
-            # For a FiniteSet, we only expect a single-element set in this code.
-            start = end = next(iter(interval))  # type: ignore
-        elif isinstance(interval, Interval):
-            start, end = interval.start, -interval.end
-        else:
-            raise RuntimeError(f"Unexpected interval type: {type(interval)}")
-        return float(start), float(end)
 
     def __init__(
             self,
@@ -112,7 +81,12 @@ class GraphCycleIterator:
         self.reverse_reachability = defaultdict(set)
 
         # Dictionary: vertex -> SortedDict of Interval -> set of candidates
-        self.seeds = defaultdict(lambda: SortedDict(self._interval_sort_key))
+        self.seeds = defaultdict(IntervalTree)
+
+        self.dynamic_graph = dn.DynDiGraph(edge_removal=True)
+
+    def get_latest_interval_end(self, v: Hashable, timestamp: Number) -> Number:
+        return next(iter(sorted(self.seeds[v][timestamp], reverse=True))).end
 
     def _prune_reverse_reachability_set(self, vertex, current_time_lower_limit):
         """
@@ -166,7 +140,7 @@ class GraphCycleIterator:
             # Prune old edges of u's reverse reachability
             self._prune_reverse_reachability_set(u, lower_time_limit)
 
-            # All nodes reachable to u are also reachable to v now
+            # All nodes reachable to 'u' are also reachable to 'v' now
             self.reverse_reachability[v].update(self.reverse_reachability[u])
 
             # Identify intervals that might close a cycle
@@ -179,76 +153,17 @@ class GraphCycleIterator:
                         if time_c > time_w
                     }
                     if candidates:
-                        interval_w = Interval(time_w, current_time)
-                        # Store the set of candidates in seeds[v] for this interval
-                        self.seeds[v][interval_w] = candidates
+                        # Store the set of candidates in seeds[v] for Interval(time_w, current_time)
+                        self.seeds[v][time_w: current_time] = Candidates(candidates)  # Cast to custom set class
+                        if time_w < current_time - self.omega:
+                            print(1)
                     # Mark (v, time_w) for deletion from reverse_reachability[u]
                     to_delete.add((v, time_w))
 
             # Remove those edges from u's set to avoid double counting
             self.reverse_reachability[u].difference_update(to_delete)
 
-    @staticmethod
-    def _find_prefix_end(seed_intervals, upper_time_limit):
-        """
-        Finds the index in seed_intervals at which intervals' end time exceeds
-        the given upper_time_limit. Used to group intervals by time windows.
 
-        Parameters
-        ----------
-        seed_intervals : list of Interval
-            The currently known intervals sorted by start time (and then by -end).
-        upper_time_limit : float
-            The maximum end time to allow in the prefix group.
-
-        Returns
-        -------
-        prefix_end_index : int
-            The index at which intervals should be split.
-            Intervals at or before this index have end <= upper_time_limit.
-            Once an interval with end > upper_time_limit is encountered,
-            we stop.
-        """
-        prefix_end_index = 0
-        for prefix_end_index, interval in enumerate(seed_intervals, start=1):
-            if interval.end > upper_time_limit:
-                break
-        return prefix_end_index
-
-    @staticmethod
-    def _process_prefix(seed_intervals, prefix_end_index, seeds):
-        """
-        Processes the "prefix" (the earliest subset of intervals in the list) up to
-        prefix_end_index, merging all candidate sets in these intervals into one.
-
-        Parameters
-        ----------
-        seed_intervals : list of Interval
-            All currently known intervals for a given vertex.
-        prefix_end_index : int
-            The index boundary for the prefix subset.
-        seeds : SortedDict
-            Mapping of Interval -> set of candidate vertices.
-
-        Returns
-        -------
-        combined_candidates : set
-            The union of candidate sets from all intervals in the prefix.
-        prefix_max_time : float
-            The maximum 'end' time among all intervals in the prefix.
-        updated_seed_intervals : list of Interval
-            Remaining intervals after the prefix has been consumed.
-        """
-        prefix = seed_intervals[: prefix_end_index]
-        updated_seed_intervals = seed_intervals[prefix_end_index:]
-
-        prefix_max_time = max(interval.end for interval in prefix)
-        combined_candidates = set()
-
-        for prefix_interval in prefix:
-            combined_candidates.update(seeds[prefix_interval])
-
-        return combined_candidates, prefix_max_time, updated_seed_intervals
 
     def _combine_seeds(self, v):
         """
@@ -260,33 +175,41 @@ class GraphCycleIterator:
         v : Hashable
             The vertex whose intervals are being merged.
         """
-        seeds = self.seeds[v]
-        if not seeds:
+        interval_tree = self.seeds[v]
+        if not interval_tree:
             return
+        combined_interval_tree = IntervalTree()
 
         # SortedDict's keys are intervals, sorted by _interval_sort_key
-        seed_intervals = list(seeds.keys())
-        combined_seeds = SortedDict(self._interval_sort_key)
+        # seed_intervals = list(seeds.keys())
+        # combined_seeds = SortedDict(self._interval_sort_key)
 
         # We iteratively merge prefixes of intervals
-        while len(seed_intervals) > 1:
-            first_interval_start = seed_intervals[0].start
-            upper_time_limit = first_interval_start + self.omega
+        while len(interval_tree) > 1:
+            first_interval_begin = interval_tree.begin()
+            upper_interval_limit = first_interval_begin + self.omega
 
             # Determine how many intervals fit into [first_interval_start, upper_time_limit]
-            prefix_end_index = self._find_prefix_end(seed_intervals, upper_time_limit)
-            combined_candidates, prefix_max_time, seed_intervals = self._process_prefix(
-                seed_intervals, prefix_end_index, seeds
-            )
+            prefix_candidates = Candidates()
+            prefix_interval_end = 0
+            prefix_intervals = interval_tree.envelop(first_interval_begin, upper_interval_limit)
 
-            # The combined interval extends to just before the next interval starts
+            for _, compatible_interval_end, compatible_interval_candidates in prefix_intervals:
+                prefix_candidates.update(compatible_interval_candidates)
+                prefix_interval_end = max(prefix_interval_end, compatible_interval_end)
+
+            interval_tree.remove_envelop(first_interval_begin, upper_interval_limit)
             # or up to upper_time_limit if no more intervals exist
-            combined_interval_end = seed_intervals[0].start if seed_intervals else upper_time_limit
-            combined_seeds[Interval(first_interval_start, combined_interval_end)] = combined_candidates
+            # The combined interval extends to just before the next interval starts
+            if interval_tree:
+                prefix_candidates.next_begin = interval_tree.begin()
+            else:
+                prefix_candidates.next_begin = upper_interval_limit
+            combined_interval_tree[first_interval_begin: prefix_interval_end] = prefix_candidates
 
         # If combined_seeds has been updated, assign it back
-        if combined_seeds:
-            self.seeds[v] = combined_seeds
+        if combined_interval_tree:
+            self.seeds[v] = combined_interval_tree
 
     def __iter__(self):
         """
@@ -316,6 +239,8 @@ class GraphCycleIterator:
             This method currently does not yield anything (though you could
             modify it to yield cycles or potential cycles in the future).
         """
+
+
         for u, v, current_time in self.edge_iterator:
             self.iteration_count += 1
 
@@ -324,6 +249,9 @@ class GraphCycleIterator:
 
             # Combine intervals for v
             self._combine_seeds(v)
+
+            expiration_time = self.get_latest_interval_end(v, timestamp=current_time)
+            self.dynamic_graph.add_interaction(u, v, t=current_time, e=expiration_time)
 
             # Periodically prune the reachability structure
             if self.iteration_count % self.prune_interval == 0:

@@ -52,7 +52,7 @@ def read_graph(graph_path: Path) -> nx.MultiDiGraph:
     Returns
     -------
     nx.MultiDiGraph
-        The graph object unpickled from the specified file.
+        The dynamic_graph object unpickled from the specified file.
 
     Raises
     ------
@@ -109,7 +109,7 @@ def get_graph_paths(
         end_date: date | str | None = None
 ) -> list[Path]:
     """
-    Retrieve a sorted list of `.pickle` graph file paths from a fixed directory,
+    Retrieve a sorted list of `.pickle` dynamic_graph file paths from a fixed directory,
     optionally filtered by a start and end date. Filenames are expected to contain
     a date in the format YYYY-MM-DD (parsed via `parse_filename`).
 
@@ -139,7 +139,7 @@ def get_graph_paths(
 
     Examples
     --------
-    >>> # Get all graph paths from "16TB/graphs_cleaned" between 2025-01-01 and 2025-01-31:
+    >>> # Get all dynamic_graph paths from "16TB/graphs_cleaned" between 2025-01-01 and 2025-01-31:
     >>> paths = get_graph_paths(start_date="2025-01-01", end_date="2025-01-31")
     >>> for p in paths:
     ...     print(p)
@@ -174,35 +174,35 @@ def get_graph_paths(
 
 class GraphEdgeIterator:
     """
-    An iterator that asynchronously reads multiple graph files (each file
+    An iterator that asynchronously reads multiple dynamic_graph files (each file
     containing edges), sorts the edges of each file by their timestamp,
     and yields them in chronological order.
 
     Parameters
     ----------
     start_date : date or str or None, optional
-        Earliest date for which graph files should be loaded.
-        If None (default), starts from the earliest available graph file.
+        Earliest date for which dynamic_graph files should be loaded.
+        If None (default), starts from the earliest available dynamic_graph file.
     end_date : date or str or None, optional
-        Latest date for which graph files should be loaded.
-        If None (default), continues until no more graph files are found.
+        Latest date for which dynamic_graph files should be loaded.
+        If None (default), continues until no more dynamic_graph files are found.
     buffer_count : int, optional
-        Number of graph "buffers" to maintain. Each buffer slot holds
-        a `Future` that is reading a graph file in the background.
+        Number of dynamic_graph "buffers" to maintain. Each buffer slot holds
+        a `Future` that is reading a dynamic_graph file in the background.
         Defaults to 2.
 
     Attributes
     ----------
     graph_path_iterator : Iterator[str]
-        An iterator over all graph file paths (based on date range).
+        An iterator over all dynamic_graph file paths (based on date range).
     buffer_count : int
-        The maximum number of concurrent graph loading operations to keep.
+        The maximum number of concurrent dynamic_graph loading operations to keep.
     buffer : list of Future or None
         A circular-like buffer storing up to `buffer_count` Future objects.
-        Each Future, when resolved, contains a loaded graph.
+        Each Future, when resolved, contains a loaded dynamic_graph.
         A `None` entry indicates no further graphs are available.
     current_edges : Iterator[Tuple[int, int, int]]
-        An iterator over the edges of the currently-active graph.
+        An iterator over the edges of the currently-active dynamic_graph.
         Each edge is a 3-tuple `(u, v, time)`.
     executor : ThreadPoolExecutor
         A thread pool executor (with `max_workers=1` by default) used to
@@ -211,15 +211,15 @@ class GraphEdgeIterator:
     Raises
     ------
     StopIteration
-        When there are no more graph files and no remaining edges to yield.
+        When there are no more dynamic_graph files and no remaining edges to yield.
 
     Notes
     -----
     - Each file is loaded asynchronously by `read_graph` in a separate thread.
-    - The edges of the currently loaded graph are sorted by their timestamp,
+    - The edges of the currently loaded dynamic_graph are sorted by their timestamp,
       so we can yield them in ascending time order.
     - Once a file's edges are exhausted, this iterator moves on to the next
-      buffer slot (the next graph) and triggers a load of the subsequent file
+      buffer slot (the next dynamic_graph) and triggers a load of the subsequent file
       if available.
     - If multiple files have overlapping time ranges, only local sorting
       within each file is performed. This class does not perform a global
@@ -230,7 +230,7 @@ class GraphEdgeIterator:
 
     Example
     -------
-    >>> # Suppose you have graph files for a range of dates:
+    >>> # Suppose you have dynamic_graph files for a range of dates:
     >>> edge_iter = GraphEdgeIterator(start_date="2023-01-01", end_date="2023-01-31", buffer_count=2)
     >>> for (u, v, t) in edge_iter:
     ...     # Process each edge in ascending time order
@@ -243,29 +243,29 @@ class GraphEdgeIterator:
             end_date: date | str | None = None,
             buffer_count: int = 2,
     ):
-        # Prepare an iterator of file paths (graph files) within the date range
+        # Prepare an iterator of file paths (dynamic_graph files) within the date range
         self.graph_path_iterator = iter(get_graph_paths(start_date=start_date, end_date=end_date))
 
         self.buffer_count = buffer_count
         # Initialize a buffer (list) of size buffer_count for futures or None
         self.buffer = [None] * self.buffer_count
 
-        # Empty iterator for the currently active graph; updated on demand
+        # Empty iterator for the currently active dynamic_graph; updated on demand
         self.current_edges: Iterator[tuple[int, int, int]] = iter([])
 
-        # ThreadPoolExecutor with max_workers=1 to asynchronously load the next graph(s)
+        # ThreadPoolExecutor with max_workers=1 to asynchronously load the next dynamic_graph(s)
         self.executor: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=1)
 
         # Preload the buffers up to the specified buffer_count
         for i in range(min(self.buffer_count, len(self.buffer))):
             self._trigger_buffer(i)
 
-        # Immediately resolve buffer[0] to set up the first graph's edges
+        # Immediately resolve buffer[0] to set up the first dynamic_graph's edges
         self._resolve_buffer(0)
 
     def _trigger_buffer(self, index: int):
         """
-        Starts loading the next graph file in the background and stores
+        Starts loading the next dynamic_graph file in the background and stores
         the resulting Future in self.buffer[index].
 
         Parameters
@@ -288,18 +288,18 @@ class GraphEdgeIterator:
 
     def _resolve_buffer(self, index: int):
         """
-        Blocks until the graph in self.buffer[index] is fully loaded (Future resolved),
+        Blocks until the dynamic_graph in self.buffer[index] is fully loaded (Future resolved),
         then sets the result's edges (sorted by time) as the current_edges iterator.
 
         Parameters
         ----------
         index : int
-            Index in the buffer list from which to retrieve a loaded graph.
+            Index in the buffer list from which to retrieve a loaded dynamic_graph.
 
         Raises
         ------
         AttributeError
-            If the resolved graph object has no `.edges` attribute.
+            If the resolved dynamic_graph object has no `.edges` attribute.
         """
         if self.buffer[index] is None:
             # No future to resolve; implies no more graphs
@@ -320,9 +320,9 @@ class GraphEdgeIterator:
 
     def __next__(self) -> tuple[int, int, int]:
         """
-        Yields the next edge in the current graph. If the current graph is
+        Yields the next edge in the current dynamic_graph. If the current dynamic_graph is
         exhausted, moves on to the next buffer slot and triggers a load
-        for a subsequent graph file (if available).
+        for a subsequent dynamic_graph file (if available).
 
         Returns
         -------
@@ -337,10 +337,10 @@ class GraphEdgeIterator:
             and no more files to load.
         """
         try:
-            # Fetch the next edge from the current graph
+            # Fetch the next edge from the current dynamic_graph
             return next(self.current_edges)
         except StopIteration:
-            # Current graph is exhausted; attempt to move to the next one
+            # Current dynamic_graph is exhausted; attempt to move to the next one
             if all(buf is None for buf in self.buffer):
                 # If the entire buffer is empty, we're done
                 raise StopIteration
@@ -357,7 +357,7 @@ class GraphEdgeIterator:
                 # If even the first slot is None, no graphs are left
                 raise StopIteration
 
-            # Trigger loading of the next graph (if any) in the last slot
+            # Trigger loading of the next dynamic_graph (if any) in the last slot
             self._trigger_buffer(self.buffer_count - 1)
 
             # Retry to get the next edge now that buffers have shifted
