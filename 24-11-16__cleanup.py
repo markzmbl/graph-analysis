@@ -20,7 +20,7 @@ def process_graph(graph_path, node_mapping):
     Processes a single dynamic_graph file.
     """
     graph = read_graph(graph_path)
-    edge_list = nx.to_pandas_edgelist(graph, edge_key="current_time")
+    edge_list = nx.to_pandas_edgelist(graph, edge_key="current_timestamp")
 
     # Apply mapping for source and target using the shared node_mapping
     edge_list["source_mapping"] = edge_list["source"].map(lambda x: node_mapping.get(x))
@@ -37,7 +37,7 @@ def process_graph(graph_path, node_mapping):
         },
     )
     graph = nx.from_pandas_edgelist(
-        edge_list, create_using=nx.MultiDiGraph, edge_attr=["edge_id", "source_id", "target_id", "value"], edge_key="current_time"
+        edge_list, create_using=nx.MultiDiGraph, edge_attr=["edge_id", "source_id", "target_id", "value"], edge_key="current_timestamp"
     )
     with graph_path.open("wb") as f:
         pickle.dump(graph, f)

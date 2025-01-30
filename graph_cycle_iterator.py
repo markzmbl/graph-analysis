@@ -1,18 +1,25 @@
+from bisect import bisect_left, bisect_right
 from collections import defaultdict
-from numbers import Number
+from collections.abc import Iterable, Callable
+from numbers import Real
 from typing import Iterator, Hashable, Set, Dict, Tuple
+import heapq
 
+import numpy as np
+
+EPS = 1  #np.finfo(float).eps
 from intervaltree import IntervalTree, Interval
-from sortedcontainers import SortedDict  # third-party library
 
 import dynetx as dn
+
+ReverseReachabilitySet = list[Tuple[Real, Hashable]]
 
 
 class Candidates(Set[Hashable]):
     """
     A specialized set to track candidates for cycle formation.
     """
-    next_begin: Number | None = None  # Start time of the next interval, if available
+    next_begin: Real | None = None  # Start time of the next interval, if available
 
 
 class GraphCycleIterator:
@@ -22,8 +29,8 @@ class GraphCycleIterator:
 
     def __init__(
             self,
-            edge_iterator: Iterator[Tuple[Hashable, Hashable, Number]],
-            omega: Number = 10,
+            edge_iterator: Iterator[Tuple[Hashable, Hashable, Real]],
+            omega: Real = 10,
             prune_interval: int = 1_000
     ) -> None:
         """
@@ -33,10 +40,10 @@ class GraphCycleIterator:
         self.edge_iterator = edge_iterator  # Stream of edges
         self.iteration_count: int = 0  # Track number of processed edges
         self.prune_interval: int = prune_interval  # Interval for pruning old data
-        self.omega: Number = omega  # Maximum time window for relevant edges
+        self.omega: Real = omega  # Maximum time window for relevant edges
 
-        # Reverse reachability mapping: vertex -> set of (predecessor, timestamp) pairs
-        self.reverse_reachability: Dict[Hashable, Set[Tuple[Hashable, Number]]] = defaultdict(set)
+        # Reverse reachability mapping: vertex -> sorted set of (lower_time_limit, predecessor) pairs
+        self.reverse_reachability: Dict[Hashable, ReverseReachabilitySet] = defaultdict(list)
 
         # Interval tracking for candidate cycles: vertex -> IntervalTree
         self.seeds: Dict[Hashable, IntervalTree] = defaultdict(IntervalTree)
@@ -44,48 +51,101 @@ class GraphCycleIterator:
         # Dynamic directed graph with edge removal enabled
         self.dynamic_graph = dn.DynDiGraph(edge_removal=True)
 
-    def get_latest_interval_end(self, v: Hashable, timestamp: Number) -> Number:
-        """
-        Retrieves the latest interval end time associated with vertex `v` at a given `timestamp`.
-        """
-        return next(iter(sorted(self.seeds[v][timestamp], reverse=True))).end
+    # @staticmethod
+    # def _get_latest_seed_interval_end(interval_tree: IntervalTree, timestamp: Real) -> Real:
+    #     """
+    #     Retrieves the latest interval end time associated with vertex `v` at a given `lower_time_limit`.
+    #     """
+    #     return next(iter(sorted(interval_tree[timestamp], reverse=True))).end
 
-    def _prune_reverse_reachability_set(self, vertex: Hashable, current_time_lower_limit: int) -> None:
+    @staticmethod
+    def _get_pruned_reverse_reachability_set(
+            reverse_reachability_set: ReverseReachabilitySet,
+            lower_time_limit: Real
+    ) -> ReverseReachabilitySet:
         """
-        Removes stale entries from the reverse reachability set of a given vertex.
+        Return the pruned reverse reachability set where stale entries are removed.
+        Assumes reverse_reachability_set is sorted by time_x.
+        Uses binary search (`bisect_left`) for efficient pruning.
         """
-        self.reverse_reachability[vertex] = {
-            (x, time_x)
-            for x, time_x in self.reverse_reachability[vertex]
-            if time_x > current_time_lower_limit  # Only keep recent entries
-        }
+        # Use bisect_left with key parameter to find the first valid index
+        index = bisect_right(  # type: ignore
+            reverse_reachability_set, lower_time_limit,
+            key=lambda item: item[0]
+        )
 
-    def _update_reverse_reachability(self, u: Hashable, v: Hashable, current_time: Number) -> None:
+        # Slice off stale entries
+        return reverse_reachability_set[index:]
+
+    @staticmethod
+    def _merge_sorted_sets(list1, list2):
+        """Merge two sorted lists of unique tuples while preserving order and uniqueness."""
+        i, j = 0, 0
+        merged = []
+
+        while i < len(list1) and j < len(list2):
+            if list1[i] < list2[j]:
+                merged.append(list1[i])
+                i += 1
+            elif list2[j] < list1[i]:
+                merged.append(list2[j])
+                j += 1
+            else:
+                # They are equal, add only one copy
+                merged.append(list1[i])
+                i += 1
+                j += 1
+
+        # Append remaining elements (if any)
+        merged.extend(list1[i:])
+        merged.extend(list2[j:])
+
+        return merged
+
+    def _update_reverse_reachability(self, u: Hashable, v: Hashable, current_timestamp: Real) -> None:
         """
-        Updates reverse reachability when a new edge (u -> v) arrives at `current_time`.
+        Updates reverse reachability when a new edge (u -> v) arrives at `current_timestamp`.
         """
         if u == v:
             return  # Ignore self-loops
 
-        lower_time_limit = current_time - self.omega  # Time limit for relevant edges
-        self.reverse_reachability[v].add((u, current_time))  # Add reachability entry
+        # Time limit for relevant edges
+        lower_time_limit: Real = current_timestamp - self.omega  # type: ignore
+        # Add reachability entry
+        self.reverse_reachability[v].append((current_timestamp, u))
+
 
         if u in self.reverse_reachability:
-            self._prune_reverse_reachability_set(u, lower_time_limit)  # Prune old entries
-            self.reverse_reachability[v].update(self.reverse_reachability[u])  # Propagate reachability
+            # Prune old entries
+            self.reverse_reachability[u] = self._get_pruned_reverse_reachability_set(
+                self.reverse_reachability[u], lower_time_limit
+            )
+            # Propagate reachability
+            tmp = list(self.reverse_reachability[v])
+            self.reverse_reachability[v] = self._merge_sorted_sets(
+                self.reverse_reachability[v], self.reverse_reachability[u]
+            )
 
-            to_delete = set()
-            for w, time_w in self.reverse_reachability[u]:
+
+            to_delete = []
+            for time_w, w in self.reverse_reachability[u]:
                 if w == v:
-                    candidates = {
-                        c for c, time_c in self.reverse_reachability[u]
-                        if time_c > time_w  # Filter relevant candidates
-                    }
-                    if candidates:
-                        self.seeds[v][time_w: current_time] = Candidates(candidates)
-                    to_delete.add((v, time_w))  # Mark for deletion
+                    # Prune stale entries
+                    looped_reverse_reachability = self._get_pruned_reverse_reachability_set(
+                        self.reverse_reachability[u], lower_time_limit=time_w
+                    )
+                    if looped_reverse_reachability:
+                        # Extract the node ids
+                        candidates = [candidate for _, candidate in looped_reverse_reachability]
+                        self.seeds[v][time_w: current_timestamp] = candidates
+                    to_delete.append((time_w, v))
 
-            self.reverse_reachability[u].difference_update(to_delete)  # Remove old entries
+            # Remove to avoid duplicate output
+            if to_delete:
+                self.reverse_reachability[u] = [w for w in self.reverse_reachability[u] if w not in to_delete]
+
+
+
 
     def _combine_seeds(self, v: Hashable) -> None:
         """
@@ -122,6 +182,9 @@ class GraphCycleIterator:
         if combined_interval_tree:
             self.seeds[v] = combined_interval_tree  # Update seeds
 
+    def _constrained_depth_first_search(self, v: Hashable):
+        pass
+
     def __iter__(self) -> "GraphCycleIterator":
         """
         Allows the GraphCycleIterator to be used as an iterator in a for-loop.
@@ -132,16 +195,26 @@ class GraphCycleIterator:
         """
         Drives the main loop that processes edges from the underlying edge iterator.
         """
-        for u, v, current_time in self.edge_iterator:
+        for u, v, current_timestamp in self.edge_iterator:
             self.iteration_count += 1  # Track iteration count
 
-            self._update_reverse_reachability(u, v, current_time)  # Process new edge
+            self._update_reverse_reachability(u, v, current_timestamp=current_timestamp)  # Process new edge
 
-            self._combine_seeds(v)  # Merge overlapping intervals
+            self._combine_seeds(v)  # Merge enclosed intervals
 
-            expiration_time = self.get_latest_interval_end(v, timestamp=current_time)  # Get expiration
-            self.dynamic_graph.add_interaction(u, v, t=current_time, e=expiration_time)  # Update dynamic graph
+            # # Get expiration
+            # expiration_time = self._get_latest_seed_interval_end(self.seeds[v], timestamp=current_timestamp)
+            # Update dynamic graph
+            # self.dynamic_graph.add_interaction(u, v, t=current_timestamp, e=expiration_time)
+            # self.dynamic_graph.add_interaction(u, v, t=current_timestamp)
 
+            # for w, interval_tree in self.seeds.items():
+            #     if not interval_tree:
+            #         continue
+            #     # self._constrained_depth_first_search(v)
+
+            # Periodic pruning
             if self.iteration_count % self.prune_interval == 0:
+                lower_time_limit = current_timestamp - self.omega
                 for w in self.reverse_reachability:
-                    self._prune_reverse_reachability_set(w, current_time - self.omega)  # Periodic pruning
+                    self._get_pruned_reverse_reachability_set(self.reverse_reachability[w], lower_time_limit)

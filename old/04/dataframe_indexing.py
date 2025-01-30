@@ -16,7 +16,7 @@ def cycles():
     # Boolean Dataframe mask where source and target nodes are equal
     self_loop_mask = graph_df["source"] == graph_df["target"]
     # The actual values filtered by the mask
-    self_loops = graph_df[self_loop_mask][["source", "target", "current_time"]].values
+    self_loops = graph_df[self_loop_mask][["source", "target", "current_timestamp"]].values
 
     for source, target, time in tqdm(self_loops, desc="Yielding self-loops"):
         yield [(source, target, time)]
@@ -25,10 +25,10 @@ def cycles():
 
     multiplicities = {}
     for (source, target), group in tqdm(
-            graph_df.sort_values(["source", "target", "current_time"]).groupby(["source", "target"]),
+            graph_df.sort_values(["source", "target", "current_timestamp"]).groupby(["source", "target"]),
             desc="Precomputing multiplicities"
     ):
-        multiplicity = group["current_time"].to_numpy()
+        multiplicity = group["current_timestamp"].to_numpy()
         multiplicities[(source, target)] = multiplicity
 
 
@@ -43,10 +43,10 @@ def cycles():
 
     histories = {}
     for source, group in tqdm(
-            graph_df.sort_values(["source", "current_time"]).groupby("source"),
+            graph_df.sort_values(["source", "current_timestamp"]).groupby("source"),
             desc="Precomputing histories"
     ):
-        history = group[["current_time", "target"]].set_index("current_time")
+        history = group[["current_timestamp", "target"]].set_index("current_timestamp")
         histories[source] = history
 
     #
@@ -54,7 +54,7 @@ def cycles():
     #     # Triangles
     #     try:
     #         traverse_edges = graph_adjacency_df.loc[v]
-    #         traverse_predecing_edges = traverse_edges[traverse_edges.index.get_level_values("current_time") > time_start]
+    #         traverse_predecing_edges = traverse_edges[traverse_edges.index.get_level_values("current_timestamp") > time_start]
     #         if not traverse_predecing_edges.empty:
     #             for time_traverse, w in traverse_predecing_edges.index:
     #                 try:

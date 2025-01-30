@@ -21,7 +21,7 @@ def main(*args, **kwargs):
     program_path = Path("./CycleDetection/cmake-build-debug/CycleDetection")
     command = [program_path, f"-i {input_path}", f"-o {output_path}", *to_cli_arguments(args)]
 
-    # Run the program and capture the output in real-current_time
+    # Run the program and capture the output in real-current_timestamp
     process = subprocess.Popen(
         command,  # Command to run
         stdout=subprocess.PIPE,  # Capture standard output

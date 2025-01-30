@@ -8,7 +8,7 @@ def generate_seeds(edges, omega, prune_interval=1_000):
     :param edges: 
     :param omega: 
     :param prune_interval: 
-    :return: All vertexs s, current_time stamps t_start and t_end, and a candidates set such that there exists a loop from s to s
+    :return: All vertexs s, current_timestamp stamps t_start and t_end, and a candidates set such that there exists a loop from s to s
         using only vertexs in C starting at t_start and ending at t_end
     """
     S = {}  # Summaries for each vertex

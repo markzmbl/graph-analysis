@@ -175,7 +175,7 @@ def get_graph_paths(
 class GraphEdgeIterator:
     """
     An iterator that asynchronously reads multiple dynamic_graph files (each file
-    containing edges), sorts the edges of each file by their timestamp,
+    containing edges), sorts the edges of each file by their lower_time_limit,
     and yields them in chronological order.
 
     Parameters
@@ -216,7 +216,7 @@ class GraphEdgeIterator:
     Notes
     -----
     - Each file is loaded asynchronously by `read_graph` in a separate thread.
-    - The edges of the currently loaded dynamic_graph are sorted by their timestamp,
+    - The edges of the currently loaded dynamic_graph are sorted by their lower_time_limit,
       so we can yield them in ascending time order.
     - Once a file's edges are exhausted, this iterator moves on to the next
       buffer slot (the next dynamic_graph) and triggers a load of the subsequent file
@@ -309,7 +309,7 @@ class GraphEdgeIterator:
         # Wait for the future to complete and get the result
         graph = self.buffer[index].result()
         # Sort the edges by their time (third element of the edge tuple)
-        self.current_edges = iter(sorted(graph.edges, key=lambda e: e[2]))
+        self.current_edges = iter(sorted(graph.edges, key=lambda item: (item[2], item[0], item[1])))
 
     def __iter__(self) -> "GraphEdgeIterator":
         """
@@ -326,9 +326,9 @@ class GraphEdgeIterator:
 
         Returns
         -------
-        (u, v, current_time) : tuple(int, int, int)
+        (u, v, current_timestamp) : tuple(int, int, int)
             The next edge from the buffered graphs, sorted in ascending
-            order by the `current_time` field.
+            order by the `current_timestamp` field.
 
         Raises
         ------

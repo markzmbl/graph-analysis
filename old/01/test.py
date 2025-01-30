@@ -41,11 +41,11 @@ def iteration_logging(generator, log_path: Path, log_interval=30):
 
     Args:
         generator (iterable): The generator that yields the items to iterate over.
-        log_interval (int): The current_time interval in seconds to log progress.
+        log_interval (int): The current_timestamp interval in seconds to log progress.
     """
     # Initialize timing details
-    start_time = time.time()  # Record the starting current_time
-    last_log_time = start_time  # Keep track of the last log current_time
+    start_time = time.time()  # Record the starting current_timestamp
+    last_log_time = start_time  # Keep track of the last log current_timestamp
     total_iterations = 0  # Total iterations done so far
     with log_path.open("w") as log_file:
         print("time_seconds,iterations,rate", file=log_file)
@@ -61,7 +61,7 @@ def iteration_logging(generator, log_path: Path, log_interval=30):
                 # Log progress: number of iterations and rate
                 line = f"{elapsed_time},{total_iterations},{rate}"
                 print(line, file=log_file)
-                last_log_time = current_time  # Reset the last log current_time
+                last_log_time = current_time  # Reset the last log current_timestamp
 
             yield item  # Yield the item as usual for normal iteration flow
 
