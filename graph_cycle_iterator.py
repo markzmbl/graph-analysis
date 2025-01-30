@@ -6,6 +6,7 @@ from typing import Iterator, Hashable, Set, Dict, Tuple
 import heapq
 
 import numpy as np
+from line_profiler import profile
 
 EPS = 1  #np.finfo(float).eps
 from intervaltree import IntervalTree, Interval
@@ -129,7 +130,7 @@ class GraphCycleIterator:
 
             to_delete = []
             for time_w, w in self.reverse_reachability[u]:
-                if w == v:
+                if w == v and time_w < current_timestamp:
                     # Prune stale entries
                     looped_reverse_reachability = self._get_pruned_reverse_reachability_set(
                         self.reverse_reachability[u], lower_time_limit=time_w
@@ -191,6 +192,7 @@ class GraphCycleIterator:
         """
         return self
 
+    @profile
     def run(self) -> None:
         """
         Drives the main loop that processes edges from the underlying edge iterator.
