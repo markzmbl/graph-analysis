@@ -1,260 +1,147 @@
 from collections import defaultdict
 from numbers import Number
-from typing import Iterator, Hashable, Set
+from typing import Iterator, Hashable, Set, Dict, Tuple
 
 from intervaltree import IntervalTree, Interval
 from sortedcontainers import SortedDict  # third-party library
 
 import dynetx as dn
-class Candidates(set):
-    next_begin: Number | None = None
+
+
+class Candidates(Set[Hashable]):
+    """
+    A specialized set to track candidates for cycle formation.
+    """
+    next_begin: Number | None = None  # Start time of the next interval, if available
+
 
 class GraphCycleIterator:
     """
-    Implements a core data structure and methods inspired by the 2SCENT (2-Source
-    Cycle Enumeration in Near-real Time) algorithm described by Kumar and Calders.
-
-    The goal is to track possible temporal cycles in a dynamic_graph stream by maintaining
-    reverse reachability sets and "seed" intervals. A newly arrived edge at time t
-    can connect previously reachable vertices to form cycles. We keep track of these
-    potential cycles in an efficient manner by storing and merging intervals.
-
-    Attributes
-    ----------
-    edge_iterator : Iterator[tuple[Hashable, Hashable, int]]
-        An iterator over edges in the form (u, v, t), where:
-          - u (Hashable) is the source vertex
-          - v (Hashable) is the destination vertex
-          - t (int) is the timestamp of the edge's arrival
-    omega : int, optional
-        The maximum allowed time window when evaluating reachability (default 10).
-        If the difference between the current edge's time and a historical edge's
-        time is greater than this window, that historical edge is pruned.
-    prune_interval : int, optional
-        The interval (in terms of number of edges processed) at which pruning
-        of stale reachability information is carried out (default 1,000).
-    reverse_reachability : defaultdict
-        A dictionary mapping each vertex to a set of (predecessor, time) pairs,
-        indicating that `predecessor` can reach this vertex at a particular time.
-    seeds : defaultdict
-        A dictionary mapping each vertex to a sorted collection (IntervalTree)
-        of intervals -> candidate sets. Each interval captures a time range where
-        a set of vertices might form cycles with that vertex.
-
-    Notes
-    -----
-    - The 2SCENT algorithm aims to identify cycles in time-evolving graphs
-      by leveraging interval constraints and reverse reachability information.
-    - This class is written in Python and uses the `sortedcontainers.SortedDict`
-      to maintain intervals in a sorted structure.
-    - The `sympy` library is used to handle intervals (`Interval`, `FiniteSet`).
+    Implements a core data structure and methods inspired by the 2SCENT algorithm.
     """
 
     def __init__(
             self,
-            edge_iterator: Iterator[tuple[Hashable, Hashable, int]],
-            omega: int = 10,
+            edge_iterator: Iterator[Tuple[Hashable, Hashable, Number]],
+            omega: Number = 10,
             prune_interval: int = 1_000
-    ):
+    ) -> None:
         """
         Initializes the GraphCycleIterator with streaming edges, a maximum time
         window, and a prune interval.
-
-        Parameters
-        ----------
-        edge_iterator : Iterator[tuple[Hashable, Hashable, int]]
-            An iterator over edges of the form (u, v, t).
-        omega : int, optional
-            The maximum time window for which old edges remain relevant (default 10).
-        prune_interval : int, optional
-            The number of edges processed between runs of the pruning procedure
-            (default 1,000).
         """
-        self.edge_iterator = edge_iterator
-        self.iteration_count = 0
-        self.prune_interval = prune_interval
+        self.edge_iterator = edge_iterator  # Stream of edges
+        self.iteration_count: int = 0  # Track number of processed edges
+        self.prune_interval: int = prune_interval  # Interval for pruning old data
+        self.omega: Number = omega  # Maximum time window for relevant edges
 
-        # Omega defines how far back in time we consider edges relevant
-        self.omega = omega
+        # Reverse reachability mapping: vertex -> set of (predecessor, timestamp) pairs
+        self.reverse_reachability: Dict[Hashable, Set[Tuple[Hashable, Number]]] = defaultdict(set)
 
-        # Dictionary: vertex -> set of (predecessor, time_of_arrival)
-        self.reverse_reachability = defaultdict(set)
+        # Interval tracking for candidate cycles: vertex -> IntervalTree
+        self.seeds: Dict[Hashable, IntervalTree] = defaultdict(IntervalTree)
 
-        # Dictionary: vertex -> SortedDict of Interval -> set of candidates
-        self.seeds = defaultdict(IntervalTree)
-
+        # Dynamic directed graph with edge removal enabled
         self.dynamic_graph = dn.DynDiGraph(edge_removal=True)
 
     def get_latest_interval_end(self, v: Hashable, timestamp: Number) -> Number:
+        """
+        Retrieves the latest interval end time associated with vertex `v` at a given `timestamp`.
+        """
         return next(iter(sorted(self.seeds[v][timestamp], reverse=True))).end
 
-    def _prune_reverse_reachability_set(self, vertex, current_time_lower_limit):
+    def _prune_reverse_reachability_set(self, vertex: Hashable, current_time_lower_limit: int) -> None:
         """
-        Removes stale (predecessor, time) entries from the reverse reachability
-        set of a given vertex, based on a lower time limit.
-
-        Parameters
-        ----------
-        vertex : Hashable
-            The vertex whose reverse reachability set is being pruned.
-        current_time_lower_limit : int
-            The oldest time (exclusive) above which edges are still relevant.
-            Any (predecessor, time) pair with `time <= current_time_lower_limit`
-            will be removed.
+        Removes stale entries from the reverse reachability set of a given vertex.
         """
         self.reverse_reachability[vertex] = {
             (x, time_x)
             for x, time_x in self.reverse_reachability[vertex]
-            if time_x > current_time_lower_limit
+            if time_x > current_time_lower_limit  # Only keep recent entries
         }
 
-    def _update_reverse_reachability(self, u, v, current_time):
+    def _update_reverse_reachability(self, u: Hashable, v: Hashable, current_time: Number) -> None:
         """
-        Updates reverse reachability when a new edge (u -> v) arrives at time current_time.
-
-        If v can be reached from u at time current_time, then:
-          1. Add (u, current_time) to reverse_reachability[v].
-          2. Prune stale entries from u's reverse reachability.
-          3. Propagate the union of u's reachable set to v.
-          4. Check if adding u -> v creates new intervals in which v might form cycles
-             (if v is found in u's reachability at some earlier time).
-
-        Parameters
-        ----------
-        u : Hashable
-            Source vertex of the newly arrived edge.
-        v : Hashable
-            Destination vertex of the newly arrived edge.
-        current_time : int
-            Timestamp of the newly arrived edge.
+        Updates reverse reachability when a new edge (u -> v) arrives at `current_time`.
         """
-        # Ignore trivial self-loops
         if u == v:
-            return
+            return  # Ignore self-loops
 
-        # Add new reverse reachability link
-        lower_time_limit = current_time - self.omega
-        self.reverse_reachability[v].add((u, current_time))
+        lower_time_limit = current_time - self.omega  # Time limit for relevant edges
+        self.reverse_reachability[v].add((u, current_time))  # Add reachability entry
 
         if u in self.reverse_reachability:
-            # Prune old edges of u's reverse reachability
-            self._prune_reverse_reachability_set(u, lower_time_limit)
+            self._prune_reverse_reachability_set(u, lower_time_limit)  # Prune old entries
+            self.reverse_reachability[v].update(self.reverse_reachability[u])  # Propagate reachability
 
-            # All nodes reachable to 'u' are also reachable to 'v' now
-            self.reverse_reachability[v].update(self.reverse_reachability[u])
-
-            # Identify intervals that might close a cycle
             to_delete = set()
             for w, time_w in self.reverse_reachability[u]:
                 if w == v:
-                    # Candidates that reached u after w are relevant for intervals
                     candidates = {
                         c for c, time_c in self.reverse_reachability[u]
-                        if time_c > time_w
+                        if time_c > time_w  # Filter relevant candidates
                     }
                     if candidates:
-                        # Store the set of candidates in seeds[v] for Interval(time_w, current_time)
-                        self.seeds[v][time_w: current_time] = Candidates(candidates)  # Cast to custom set class
-                        if time_w < current_time - self.omega:
-                            print(1)
-                    # Mark (v, time_w) for deletion from reverse_reachability[u]
-                    to_delete.add((v, time_w))
+                        self.seeds[v][time_w: current_time] = Candidates(candidates)
+                    to_delete.add((v, time_w))  # Mark for deletion
 
-            # Remove those edges from u's set to avoid double counting
-            self.reverse_reachability[u].difference_update(to_delete)
+            self.reverse_reachability[u].difference_update(to_delete)  # Remove old entries
 
-
-
-    def _combine_seeds(self, v):
+    def _combine_seeds(self, v: Hashable) -> None:
         """
-        Merges adjacent or overlapping intervals for vertex v if they fall
-        within a time window of size self.omega, reducing storage and complexity.
-
-        Parameters
-        ----------
-        v : Hashable
-            The vertex whose intervals are being merged.
+        Merges adjacent or overlapping intervals for vertex `v` within the allowed time window.
         """
         interval_tree = self.seeds[v]
         if not interval_tree:
             return
+
         combined_interval_tree = IntervalTree()
 
-        # SortedDict's keys are intervals, sorted by _interval_sort_key
-        # seed_intervals = list(seeds.keys())
-        # combined_seeds = SortedDict(self._interval_sort_key)
-
-        # We iteratively merge prefixes of intervals
         while len(interval_tree) > 1:
             first_interval_begin = interval_tree.begin()
-            upper_interval_limit = first_interval_begin + self.omega
+            upper_interval_limit = first_interval_begin + self.omega  # Define merge range
 
-            # Determine how many intervals fit into [first_interval_start, upper_time_limit]
             prefix_candidates = Candidates()
             prefix_interval_end = 0
             prefix_intervals = interval_tree.envelop(first_interval_begin, upper_interval_limit)
 
             for _, compatible_interval_end, compatible_interval_candidates in prefix_intervals:
                 prefix_candidates.update(compatible_interval_candidates)
-                prefix_interval_end = max(prefix_interval_end, compatible_interval_end)
+                prefix_interval_end = max(prefix_interval_end, compatible_interval_end)  # Extend interval
 
-            interval_tree.remove_envelop(first_interval_begin, upper_interval_limit)
-            # or up to upper_time_limit if no more intervals exist
-            # The combined interval extends to just before the next interval starts
+            interval_tree.remove_envelop(first_interval_begin, upper_interval_limit)  # Remove merged intervals
+
             if interval_tree:
-                prefix_candidates.next_begin = interval_tree.begin()
+                prefix_candidates.next_begin = interval_tree.begin()  # Set next interval start
             else:
-                prefix_candidates.next_begin = upper_interval_limit
-            combined_interval_tree[first_interval_begin: prefix_interval_end] = prefix_candidates
+                prefix_candidates.next_begin = upper_interval_limit  # No more intervals
 
-        # If combined_seeds has been updated, assign it back
+            combined_interval_tree[
+            first_interval_begin: prefix_interval_end] = prefix_candidates  # Store merged interval
+
         if combined_interval_tree:
-            self.seeds[v] = combined_interval_tree
+            self.seeds[v] = combined_interval_tree  # Update seeds
 
-    def __iter__(self):
+    def __iter__(self) -> "GraphCycleIterator":
         """
-        Allows the GraphCycleIterator to be used as an iterator in a for-loop
-        or any iterator context.
-
-        Returns
-        -------
-        GraphCycleIterator
-            The iterator itself (Python convention).
+        Allows the GraphCycleIterator to be used as an iterator in a for-loop.
         """
         return self
 
-    def run(self):
+    def run(self) -> None:
         """
         Drives the main loop that processes edges from the underlying edge iterator.
-
-        For each incoming edge (u, v, t):
-          - Increment the iteration counter.
-          - Update the reverse reachability structure (_update_reverse_reachability).
-          - Attempt to combine intervals for the destination vertex v.
-          - Periodically prune stale entries in the reverse reachability.
-
-        Yields
-        ------
-        None
-            This method currently does not yield anything (though you could
-            modify it to yield cycles or potential cycles in the future).
         """
-
-
         for u, v, current_time in self.edge_iterator:
-            self.iteration_count += 1
+            self.iteration_count += 1  # Track iteration count
 
-            # Update the reverse reachability with the new edge
-            self._update_reverse_reachability(u, v, current_time)
+            self._update_reverse_reachability(u, v, current_time)  # Process new edge
 
-            # Combine intervals for v
-            self._combine_seeds(v)
+            self._combine_seeds(v)  # Merge overlapping intervals
 
-            expiration_time = self.get_latest_interval_end(v, timestamp=current_time)
-            self.dynamic_graph.add_interaction(u, v, t=current_time, e=expiration_time)
+            expiration_time = self.get_latest_interval_end(v, timestamp=current_time)  # Get expiration
+            self.dynamic_graph.add_interaction(u, v, t=current_time, e=expiration_time)  # Update dynamic graph
 
-            # Periodically prune the reachability structure
             if self.iteration_count % self.prune_interval == 0:
-                # Only prune edges older than (current_time - self.omega)
                 for w in self.reverse_reachability:
-                    self._prune_reverse_reachability_set(w, current_time - self.omega)
+                    self._prune_reverse_reachability_set(w, current_time - self.omega)  # Periodic pruning
