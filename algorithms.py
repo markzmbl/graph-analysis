@@ -105,7 +105,7 @@ def _directed_cycle_search(G, length_bound, temporal_bound):
     while components:
         c = components.pop()
         Gc = G.subgraph(c)
-        v, _, time = next(iter(G.edges))
+        v, _, time = next(iter(G.edge_generator))
         yield from _bounded_cycle_search(Gc, [v, time], length_bound, temporal_bound)
         # delete v after searching G, to make sure we can find v
         G.remove_node(v)
