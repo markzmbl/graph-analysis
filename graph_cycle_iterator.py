@@ -78,14 +78,16 @@ class GraphCycleIterator:
     """
     Implements a core data structure and methods inspired by the 2SCENT algorithm.
     """
-    seeds_history: list | None = None
-    combined_seeds_history: list | None = None
+    vertex_seed_sizes_history: list | None = None
+    interval_durations_history: list | None = None
+
 
     def __init__(
             self,
             interactions: Iterator[Interaction],
             omega: TimeDelta = 10,
             prune_interval: int = 1_000,
+            combine_seeds: bool = True,
             track_history: bool = False
     ) -> None:
         """
@@ -106,10 +108,12 @@ class GraphCycleIterator:
         # Dynamic directed graph with edge removal enabled
         self.dynamic_graph = dn.DynDiGraph(edge_removal=True)
 
+        self.combine_seeds = combine_seeds
+
         self.track_history = track_history
         if track_history:
-            self.seeds_history = []
-            self.combined_seeds_history = []
+            self.vertex_seed_sizes_history = []
+            self.interval_durations_history = []
 
     def _update_reverse_reachability(self, interaction: Interaction) -> None:
         """
@@ -219,17 +223,39 @@ class GraphCycleIterator:
     def _constrained_depth_first_search(self, v: Hashable):
         pass
 
-    def _get_seed_bin_counts(self):
+    def _get_seed_size_counts(self):
         return dict(Counter(
             len(interval_tree)
             for interval_tree in self.seeds.values()
             if interval_tree
         ))
 
+
+    def _get_seed_duration_counts(self):
+        return dict(Counter(
+            interval.length()
+            for interval_tree in self.seeds.values() if interval_tree
+            for interval in interval_tree
+        ))
+
+    def _prune_graph(self):
+        minimum_interval_begin = None
+        for interval_tree in self.seeds.values():
+            if (
+                    interval_tree
+                    and (
+                    (current_interval_begin := interval_tree.begin()) < minimum_interval_begin
+                    or minimum_interval_begin is None)
+            ):
+                minimum_interval_begin = current_interval_begin
+
     def __iter__(self) -> "GraphCycleIterator":
         """
         Allows the GraphCycleIterator to be used as an iterator in a for-loop.
         """
+        return self
+
+    def __next__(self):
         for source, target, timestamp in self.interactions:
 
             interaction = Interaction(source, target, timestamp)
@@ -237,23 +263,12 @@ class GraphCycleIterator:
 
             self._update_reverse_reachability(interaction)  # Process new edge
 
-            # if self.track_history:
-            #     self.seeds_history.append(self._get_seed_bin_counts())
+            if self.combine_seeds:
+                self._combine_seeds(interaction.target)  # Merge enclosed intervals
 
-            self._combine_seeds(interaction.target)  # Merge enclosed intervals
-            # if self.track_history:
-            #     self.combined_seeds_history.append(self._get_seed_bin_counts())
-
-            minimum_interval_begin = np.inf
-            for interval_tree in self.seeds.values():
-                if (
-                        interval_tree
-                        and (current_interval_begin := interval_tree.begin()) < minimum_interval_begin
-                ):
-                    minimum_interval_begin = current_interval_begin
-
-            if np.isfinite(minimum_interval_begin):
-                yield minimum_interval_begin
+            if self.track_history:
+                self.vertex_seed_sizes_history.append(self._get_seed_size_counts())
+                self.interval_durations_history.append(self._get_seed_duration_counts())
 
             # Update dynamic graph
             # self.dynamic_graph.add_interaction(*interaction, e=interaction.timestamp + self.omega)
@@ -262,3 +277,5 @@ class GraphCycleIterator:
             #     if not interval_tree:
             #         continue
             #     # self._constrained_depth_first_search(v)
+
+        raise StopIteration()
