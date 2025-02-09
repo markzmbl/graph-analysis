@@ -3,8 +3,10 @@ import pickle
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, date
+from linecache import cache
 from pathlib import Path
 import networkx as nx
+from sympy.core.cache import cached_property
 
 DATE_FORMAT = "%Y-%m-%d"
 
@@ -154,7 +156,7 @@ def get_graph_paths(
         end_date = parse_date(end_date)
 
     # Locate all .pickle files in the target directory
-    graph_paths = sorted(Path("16TB").glob("*.pickle"))
+    graph_paths = sorted(Path("input/pickles").glob("*.pickle"))
 
     # Filter based on the provided date range
     if start_date is not None or end_date is not None:
@@ -244,12 +246,15 @@ class GraphEdgeIterator:
             buffer_count: int = 2,
     ):
         # Prepare an iterator of file paths (transaction_graph files) within the date range
-        self.graph_path_iterator = iter(get_graph_paths(start_date=start_date, end_date=end_date))
+        self.start_date = start_date
+        self.end_date = end_date
+        self.graph_path_iterator = iter(get_graph_paths(start_date=self.start_date, end_date=self.end_date))
 
         self.buffer_count = buffer_count
         # Initialize a buffer (list) of size buffer_count for futures or None
         self.buffer = [None] * self.buffer_count
 
+    def _initialize_buffer(self):
         # Empty iterator for the currently active transaction_graph; updated on demand
         self.current_edges: Iterator[tuple[int, int, int]] = iter([])
 
@@ -316,7 +321,7 @@ class GraphEdgeIterator:
         Returns self as an iterator, enabling usage in a for-loop or any
         iterative context.
         """
-        return self
+        return GraphEdgeIterator(start_date=self.start_date, end_date=self.end_date, buffer_count=self.buffer_count)
 
     def __next__(self) -> tuple[int, int, int]:
         """
@@ -336,6 +341,9 @@ class GraphEdgeIterator:
             If there are no more edges in any of the loaded buffers
             and no more files to load.
         """
+        if self.buffer[0] is None:
+            self._initialize_buffer()
+
         try:
             # Fetch the next edge from the current transaction_graph
             return next(self.current_edges)
@@ -362,3 +370,11 @@ class GraphEdgeIterator:
 
             # Retry to get the next edge now that buffers have shifted
             return next(self)
+
+    @cached_property
+    def size(self):
+        return sum(1 for _ in self)
+
+    def __len__(self):
+        return self.size
+
