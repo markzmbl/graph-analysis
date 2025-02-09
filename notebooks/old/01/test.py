@@ -79,7 +79,7 @@ for graph_path in graphs_paths:
         graph = pickle.load(graph_pickle)
 
     log_path = logs_directory / f"{graph_path.stem}.csv"
-    # cycles_generator = nx.chordless_cycles(dynamic_graph)
+    # cycles_generator = nx.chordless_cycles(transaction_graph)
     cycles_generator = range(100)
     for cycle in iteration_logging(cycles_generator, log_path):
         time.sleep(1)

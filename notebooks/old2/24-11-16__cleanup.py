@@ -17,7 +17,7 @@ def load_node_mapping(file_path):
 
 def process_graph(graph_path, node_mapping):
     """
-    Processes a single dynamic_graph file.
+    Processes a single transaction_graph file.
     """
     graph = read_graph(graph_path)
     edge_list = nx.to_pandas_edgelist(graph, edge_key="current_timestamp")
@@ -46,7 +46,7 @@ def process_graph(graph_path, node_mapping):
 def main():
     # Use a multiprocessing manager to create a shared dictionary
     manager = multiprocessing.Manager()
-    node_mapping = manager.dict(load_node_mapping("node_ids.txt"))
+    node_mapping = manager.dict(load_node_mapping("../input/node_ids.txt"))
 
     graph_paths = get_graph_paths()
     num_workers = multiprocessing.cpu_count() // 2
@@ -55,7 +55,7 @@ def main():
     process_graph_with_mapping = partial(process_graph, node_mapping=node_mapping)
 
     with ProcessPoolExecutor(max_workers=num_workers) as executor:
-        # Map over the dynamic_graph paths only since node_mapping is fixed
+        # Map over the transaction_graph paths only since node_mapping is fixed
         list(tqdm(executor.map(process_graph_with_mapping, graph_paths), total=len(graph_paths)))
 
 

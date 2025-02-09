@@ -31,19 +31,20 @@ def main():
         log_directory = length_bound_directory / "logs"
         cycles_directory = length_bound_directory / "cycles"
 
-        log_directory.mkdir(parents=True, exist_ok=True)
-        cycles_directory.mkdir(parents=True, exist_ok=True)
+        length_bound_directory.mkdir()
+        log_directory.mkdir()
+        cycles_directory.mkdir()
 
         # Use a process pool for parallelization
         with ProcessPoolExecutor(max_workers=multiprocessing.cpu_count() // 4) as executor:
-            # Submit dynamic_graph tasks for parallel processing
+            # Submit transaction_graph tasks for parallel processing
             futures = [
                 executor.submit(process_graph, graph_path, length_bound, log_directory, cycles_directory)
                 for graph_path in graph_paths
             ]
-            # Main progress bar for the outer loop (tracking dynamic_graph files)
+            # Main progress bar for the outer loop (tracking transaction_graph files)
             for future in tqdm(futures, desc=f"Processing graphs with {length_bound=}", total=len(futures)):
-                future.result()  # Wait for the dynamic_graph processing to complete
+                future.result()  # Wait for the transaction_graph processing to complete
 
 
 if __name__ == "__main__":

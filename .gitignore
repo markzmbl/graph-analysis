@@ -3,12 +3,5 @@ __pycache__
 **/.idea
 
 .venv
-16TB
-graphs
-*.pickle
-*.csv
-CycleDetection
-*.png
-
-node_ids.pickle
-node_ids.txt
+input/pickles
+input/node_ids.txt
