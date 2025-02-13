@@ -1,11 +1,23 @@
 from __future__ import annotations
 
+
 import networkx as nx
 
-from cycles.types import TimeStamp
+from cycles.types import TimeStamp, TimeDelta
 
 
 class TransactionGraph(nx.MultiDiGraph):
+    def begin(self) -> TimeStamp:
+        *_, end_timestamp = next(iter(self.edges(keys=True)))
+        return end_timestamp
+
+    def length(self) -> TimeDelta:
+        timestamps = [timestamp for *_, timestamp in self.edges(keys=True)]
+        timestamps = sorted(timestamps)
+        if not timestamps:
+            return 0
+        return timestamps[-1] - timestamps[0]
+
     def time_slice(self, begin: TimeStamp | None = None, end: TimeStamp | None = None):
         """
         Returns a subgraph view that filters edges based on the temporal constraints.

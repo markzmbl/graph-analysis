@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from _bisect import bisect_right, bisect_left
+from threading import Event
 from typing import Hashable, NamedTuple
 
 Vertex = Hashable
@@ -83,3 +84,4 @@ class Seed(NamedTuple):
     begin: TimeStamp
     end: TimeStamp
     candidates: Candidates
+    is_active: Event

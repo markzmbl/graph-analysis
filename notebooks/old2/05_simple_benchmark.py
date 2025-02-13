@@ -35,7 +35,7 @@ def main():
         log_directory.mkdir()
         cycles_directory.mkdir()
 
-        # Use a process pool for parallelization
+        # Use a _process pool for parallelization
         with ProcessPoolExecutor(max_workers=multiprocessing.cpu_count() // 4) as executor:
             # Submit transaction_graph tasks for parallel processing
             futures = [

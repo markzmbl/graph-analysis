@@ -4,10 +4,13 @@ import io
 import time
 from collections import defaultdict, Counter
 from collections.abc import Iterator, Hashable
+from concurrent.futures import Future, wait, FIRST_COMPLETED
+from concurrent.futures.thread import ThreadPoolExecutor
+from threading import Lock, Event
 
 import numpy as np
 import psutil
-from intervaltree import IntervalTree
+from intervaltree import IntervalTree, Interval
 from tqdm.auto import tqdm
 
 from cycles.graph import TransactionGraph
@@ -19,43 +22,57 @@ class GraphCycleIterator:
     """
     Implements a core data structure and methods inspired by the 2SCENT algorithm.
     """
-    logging: bool = False
 
     def __init__(
             self,
             interactions: Iterator[Interaction],
             omega: TimeDelta = 10,
-            prune_interval: int = 1_000,
-            log_stream: io.IOBase | None = None,
-            log_interval: int = 1,
+            num_workers: int = 1,
+            cleanup_interval: int = 1_000,
+            log_stream: io.StringIO | None = None,
     ) -> None:
         """
         Initializes the GraphCycleIterator with streaming edges, a maximum time
         window, and a prune interval.
         """
-        self.interactions = iter(interactions)  # Stream of edges
+        self._interactions = iter(interactions)  # Stream of edges
         self.iteration_count: int = 0  # Track number of processed edges
-        self.cleanup_interval: int = prune_interval  # Interval for pruning old data
+
+        self.cleanup_interval: int = cleanup_interval  # Interval for pruning old data
         self.omega: TimeDelta = omega  # Maximum time window for relevant edges
 
+        self._thread_pool: ThreadPoolExecutor | None = None
+        self._finalize_lock: Lock | None = None
+        self.max_workers = num_workers  # Maximum number of active workers
+        self._futures: set[Future] = set()
+
         # Reverse reachability mapping: vertex -> sorted set of (lower_time_limit, predecessor) pairs
-        self.reverse_reachability: dict[Vertex, ReverseReachabilitySet] = defaultdict(ReverseReachabilitySet)
+        self._reverse_reachability: dict[Vertex, ReverseReachabilitySet] = defaultdict(ReverseReachabilitySet)
 
         # Interval tracking for candidate cycles: vertex -> IntervalTree
-        self.seed_intervals: dict[Vertex, IntervalTree] = defaultdict(IntervalTree)
+        self._seed_intervals: dict[Vertex, IntervalTree] = defaultdict(IntervalTree)
+
+        # Seeds which can not grow any further and are primed for exploration
+        self._primed_seeds: list[Seed] = []
+        self._minimum_interval_begin = 0
 
         # Dynamic directed graph with edge removal enabled
         self.transaction_graph = TransactionGraph()
 
-        if log_stream:
+        self.start_time = time.monotonic()
+        if log_stream is None:
+            self.logging = False
+        else:
             self.logging = True
-            self.start_time = time.monotonic()
-            self.last_log_time = self.start_time
-            self.process = psutil.Process()
+            self._log_stream = log_stream
+            self._process = psutil.Process()
+            self._write_log_line(self._get_log_line_values(header=True))
+            self._last_log_time = self.start_time
 
-            self.log_interval = log_interval
-            self.log_stream = log_stream
-            self.log_stream.write("time_seconds,iterations_total,iterations_rate,memory_usage_bytes\n")
+    def _initialize_thread_pool(self):
+        self._thread_pool = ThreadPoolExecutor(max_workers=self.max_workers)
+        self._finalize_lock = Lock()
+
 
     def _update_reverse_reachability(self, interaction: Interaction) -> None:
         """
@@ -67,7 +84,7 @@ class GraphCycleIterator:
             interaction.target,
             interaction.timestamp,
         )
-        target_reverse_reachability = self.reverse_reachability[target]
+        target_reverse_reachability = self._reverse_reachability[target]
 
         # Add reachability entry
         # S(b) ← S(b) ∪ {(a, t)}
@@ -78,11 +95,11 @@ class GraphCycleIterator:
         # S(b) ← S(b)\{(x, tx) ∈ S(b) | tx ≤ t−ω}
         target_reverse_reachability.prune(self.lower_time_limit)
 
-        if source not in self.reverse_reachability:
+        if source not in self._reverse_reachability:
             return
 
         # if S(a) exists then
-        source_reverse_reachability = self.reverse_reachability[source]
+        source_reverse_reachability = self._reverse_reachability[source]
 
         # Prune old entries for relevant edges
         # S(a) ← S(a)\{(x,tx) ∈ S(a) | tx ≤ t−ω}
@@ -96,7 +113,7 @@ class GraphCycleIterator:
         cyclic_reachability = ReverseReachabilitySet(
             v for v in target_reverse_reachability if v.vertex == target
         )
-        if not cyclic_reachability:
+        if len(cyclic_reachability) == 0:
             return
 
         # {c ∈ S(a), tc > tb}
@@ -108,7 +125,7 @@ class GraphCycleIterator:
                 strictly_smaller=True
             )
 
-            if not candidate_reachability:
+            if len(candidate_reachability) == 0:
                 continue
 
             # C ← {c | (c,tc) ∈ S(a),tc > tb} ∪ {a}
@@ -120,11 +137,11 @@ class GraphCycleIterator:
             if len(candidates) > 1:
                 candidates.next_begin = cyclic_reachable.timestamp + self.omega
                 # Output (b, [tb, t], C)
-                self.seed_intervals[target][cyclic_reachable.timestamp: current_timestamp] = candidates
+                self._seed_intervals[target][cyclic_reachable.timestamp: current_timestamp] = candidates
 
         # Remove to avoid duplicate output
         # S(b) ← S(b) \ {(b, tb)}
-        self.reverse_reachability[target] = ReverseReachabilitySet(
+        self._reverse_reachability[target] = ReverseReachabilitySet(
             v for v in target_reverse_reachability if v not in cyclic_reachability
         )
 
@@ -132,10 +149,10 @@ class GraphCycleIterator:
         """
         Merges adjacent or overlapping intervals for vertex `v` within the allowed time window.
         """
-        if v not in self.seed_intervals:
+        if v not in self._seed_intervals:
             return
 
-        interval_tree = self.seed_intervals[v]
+        interval_tree = self._seed_intervals[v]
         combined_interval_tree = IntervalTree()
 
         while len(interval_tree) > 1:
@@ -169,92 +186,95 @@ class GraphCycleIterator:
             combined_interval_tree[first_interval_begin: combined_interval_end] = combined_candidates
 
         if combined_interval_tree:
-            self.seed_intervals[v] = combined_interval_tree  # Update seed_intervals
+            self._seed_intervals[v] = combined_interval_tree  # Update _seed_intervals
 
-    def _get_seed_size_counts(self):
-        return dict(Counter(
-            len(interval_tree)
-            for interval_tree in self.seed_intervals.values()
-            if interval_tree
-        ))
-
-    def _get_seed_duration_counts(self):
-        return dict(Counter(
-            interval.length()
-            for interval_tree in self.seed_intervals.values() if interval_tree
-            for interval in interval_tree
-        ))
-
-    def _get_finalized_seeds(self):
+    def _update_primed_seeds(self):
         lower_time_range = (0, self.lower_time_limit)
-        finalized_seeds: list[Seed] = []
-        for vertex, interval_tree in self.seed_intervals.items():
+        for vertex, interval_tree in self._seed_intervals.items():
             for interval in interval_tree.envelop(*lower_time_range):
                 seed = Seed(
                     vertex=vertex,
                     begin=interval.begin,
                     end=interval.end,
                     candidates=interval.data,
+                    is_active=Event()
                 )
-                finalized_seeds.append(seed)
+                self._primed_seeds.append(seed)
             interval_tree.remove_envelop(*lower_time_range)
-        return finalized_seeds
 
     def _constrained_depth_first_search(self, seed: Seed):
         # seed.candidates.add(seed.vertex)
         seed.candidates.add(seed.vertex)
-        g = self.transaction_graph.subgraph(seed.candidates).time_slice(seed.begin, seed.end)
-        n = len(g.nodes())
-        m = len(g.edges(keys=True))
-        # print(f"nodes: {n}, edges: {m}")
-        # if seed.candidates <= {59834236, 67975685, 85341516}:
-        #     print(1)
-        if m < n:
-            print(1)
-        if {x for edge in g.edges() for x in edge} < seed.candidates:
-            print(1)
+        exploration_graph = (
+            self.transaction_graph
+            .time_slice(seed.begin, seed.end)
+            .subgraph(seed.candidates)
+        )
         # TODO: add logic for pairs u <-> v
-        # search_graph =
+        if self.logging:
+            self._log(
+                exploration_interval=Interval(seed.begin, seed.end),
+                exploration_graph=exploration_graph
+            )
 
-    def _prune_reverse_reachability(self):
-        # for all summaries S(x) do
-        for vertex in list(self.reverse_reachability):
-            reverse_reachability = self.reverse_reachability[vertex]
-            # S(x) ← S(x)\{(y,ty) ∈ S(x) | ty ≤ t−ω}
-            reverse_reachability.prune(self.lower_time_limit)
-            if not reverse_reachability:
-                del self.reverse_reachability[vertex]
+        with self._finalize_lock:
+            self._primed_seeds.remove(seed)
+            self._minimum_interval_begin = max(seed.begin, self._minimum_interval_begin)
 
-    def _prune_seed_intervals(self):
-        for vertex in list(self.seed_intervals):
-            if not self.seed_intervals[vertex]:
-                del self.seed_intervals[vertex]
 
-    def _prune_transaction_graph(self):
-        if self.seed_intervals:
-            minimum_interval_begin = min(interval_tree.begin() for interval_tree in self.seed_intervals.values())
-            self.transaction_graph.prune(lower_time_limit=minimum_interval_begin)
+    def _submit_exploration_task(self, seed: Seed):
+        while len(self._futures) >= self.max_workers:
+            done, not_done = wait(self._futures, return_when=FIRST_COMPLETED)
+            # Remove completed _futures from the list.
+            self._futures = not_done
+        future = self._thread_pool.submit(self._constrained_depth_first_search, seed)  # TODO: replace with exploration
+        self._futures.add(future)
 
     def cleanup(self):
-        self._prune_reverse_reachability()
-        self._prune_seed_intervals()
-        self._prune_transaction_graph()
+        # for all summaries S(x) do
+        for vertex in list(self._reverse_reachability):
+            reverse_reachability = self._reverse_reachability[vertex]
+            # S(x) ← S(x)\{(y,ty) ∈ S(x) | ty ≤ t−ω}
+            reverse_reachability.prune(self.lower_time_limit)
+            if len(reverse_reachability) == 0:
+                del self._reverse_reachability[vertex]
 
-    def log(self):
+        for vertex in list(self._seed_intervals):
+            if self._seed_intervals[vertex].is_empty():
+                del self._seed_intervals[vertex]
+
+        if self._minimum_interval_begin > self.transaction_graph.begin():
+            self.transaction_graph.prune(lower_time_limit=self._minimum_interval_begin)
+
+    def _get_log_line_values(
+            self,
+            interval: Interval | None = None,
+            graph: TransactionGraph | None = None,
+            header=False
+    ) -> list[str | float]:
         current_time = time.monotonic()
-        if current_time - self.last_log_time < self.log_interval:
-            return
 
-        elapsed_time = current_time - self.start_time
-        rate = self.iteration_count / elapsed_time
-        memory_usage_bytes = self.process.memory_info().rss
+        fields = {
+            "time_seconds": lambda: current_time,
+            "iterations_total": lambda: self.iteration_count,
+            "iterations_rate": lambda: self.iteration_count / (current_time - self.start_time),
+            "memory_usage_bytes": lambda: self._process.memory_info().rss,
+            "seed_interval_length": lambda: interval.length() if interval else None,
+            "graph_length": lambda: graph.length() if graph else None,
+            "number_of_nodes": lambda: graph.number_of_nodes() if graph else None,
+            "number_of_edges": lambda: graph.number_of_edges() if graph else None
+        }
+        if header:
+            return list(fields.keys())
+        return [function() for function in fields.values()]
 
-        self.log_stream.write(
-            f"{elapsed_time},"
-            f"{self.iteration_count},"
-            f"{rate},"
-            f"{memory_usage_bytes}\n"
-        )
+    def _write_log_line(self, log_line_values: list[str | float]):
+        log_line = ",".join(str(value) for value in log_line_values) + "\n"
+        self._log_stream.writelines([log_line])
+
+    def _log(self, exploration_interval: Interval, exploration_graph: TransactionGraph):
+        log_line_values = self._get_log_line_values(interval=exploration_interval, graph=exploration_graph)
+        self._write_log_line(log_line_values=log_line_values)
 
     def __iter__(self) -> "GraphCycleIterator":
         """
@@ -263,7 +283,10 @@ class GraphCycleIterator:
         return self
 
     def __next__(self):
-        for source, target, timestamp in tqdm(self.interactions):
+        if self._thread_pool is None:
+            self._initialize_thread_pool()
+
+        for source, target, timestamp in tqdm(self._interactions):
             # Skip trivial self loops
             if source == target:
                 continue
@@ -277,18 +300,18 @@ class GraphCycleIterator:
 
             self._combine_seeds(interaction.target)  # Merge enclosed intervals
 
+            self._update_primed_seeds()
+
             self.transaction_graph.add_edge(interaction.source, interaction.target, key=interaction.timestamp)
 
-            finalized_seeds = self._get_finalized_seeds()
-
-            if finalized_seeds:
-                for seed in finalized_seeds:
-                    self._constrained_depth_first_search(seed)
+            for primed_seed in self._primed_seeds:
+                if not primed_seed.is_active.is_set():
+                    primed_seed.is_active.set()
+                    self._submit_exploration_task(primed_seed)
 
             if self.iteration_count % self.cleanup_interval == 0:
                 self.cleanup()
 
-            if self.logging:
-                self.log()
-
+        wait(self._futures)
+        self._thread_pool.shutdown()
         raise StopIteration()

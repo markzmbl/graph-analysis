@@ -3,10 +3,10 @@ import pickle
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, date
+from functools import cached_property
 from linecache import cache
 from pathlib import Path
 import networkx as nx
-from sympy.core.cache import cached_property
 
 DATE_FORMAT = "%Y-%m-%d"
 
@@ -251,7 +251,7 @@ class GraphEdgeIterator:
         self.graph_path_iterator = iter(get_graph_paths(start_date=self.start_date, end_date=self.end_date))
 
         self.buffer_count = buffer_count
-        # Initialize a buffer (list) of size buffer_count for futures or None
+        # Initialize a buffer (list) of size buffer_count for _futures or None
         self.buffer = [None] * self.buffer_count
 
     def _initialize_buffer(self):
