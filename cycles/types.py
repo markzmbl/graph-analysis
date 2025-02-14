@@ -84,4 +84,3 @@ class Seed(NamedTuple):
     begin: TimeStamp
     end: TimeStamp
     candidates: Candidates
-    is_active: Event

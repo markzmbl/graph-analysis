@@ -17,7 +17,7 @@ def load_node_mapping(file_path):
 
 def process_graph(graph_path, node_mapping):
     """
-    Processes a single transaction_graph file.
+    Processes a single _transaction_graph file.
     """
     graph = read_graph(graph_path)
     edge_list = nx.to_pandas_edgelist(graph, edge_key="current_timestamp")
@@ -55,7 +55,7 @@ def main():
     process_graph_with_mapping = partial(process_graph, node_mapping=node_mapping)
 
     with ProcessPoolExecutor(max_workers=num_workers) as executor:
-        # Map over the transaction_graph paths only since node_mapping is fixed
+        # Map over the _transaction_graph paths only since node_mapping is fixed
         list(tqdm(executor.map(process_graph_with_mapping, graph_paths), total=len(graph_paths)))
 
 
