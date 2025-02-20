@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import networkx as nx
 
-from cycles.types import TimeStamp, TimeDelta
+from dscent.types import TimeStamp, TimeDelta
 
 
 class TransactionGraph(nx.MultiDiGraph):

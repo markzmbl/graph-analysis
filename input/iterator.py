@@ -156,7 +156,7 @@ def get_graph_paths(
         end_date = parse_date(end_date)
 
     # Locate all .pickle files in the target directory
-    graph_paths = sorted(Path("input/pickles").glob("*.pickle"))
+    graph_paths = sorted((Path(__file__).parent / "pickles").glob("*.pickle"))
 
     # Filter based on the provided date range
     if start_date is not None or end_date is not None:

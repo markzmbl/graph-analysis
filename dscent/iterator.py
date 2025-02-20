@@ -10,15 +10,14 @@ from tempfile import TemporaryFile, NamedTemporaryFile
 from threading import RLock, Lock, Event
 from time import sleep
 
-from filelock import FileLock
 import numpy as np
 import psutil
 from intervaltree import IntervalTree, Interval
 from pandas import Timestamp
 from tqdm.auto import tqdm
 
-from cycles.graph import TransactionGraph
-from cycles.types import Vertex, TimeDelta, Interaction, ReverseReachableVertex, ReverseReachabilitySet, \
+from dscent.graph import TransactionGraph
+from dscent.types import Vertex, TimeDelta, Interaction, ReverseReachableVertex, ReverseReachabilitySet, \
     Candidates, Seed
 
 MY_LOCK = RLock()
