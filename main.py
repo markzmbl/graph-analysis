@@ -24,11 +24,6 @@ def process_graph(thread_id, omega, start_date, end_date, max_workers, cleanup_i
             ))
         except KeyboardInterrupt:
             pass
-    df = pd.read_csv(log_file)
-    df = df.set_index("time_seconds")
-    print(df)
-    df.plot(subplots=True)
-    plt.show()
 
 
 def main():
