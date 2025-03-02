@@ -16,8 +16,8 @@ from intervaltree import IntervalTree, Interval
 from pandas import Timestamp
 from tqdm.auto import tqdm
 
-from dscent.graph import TransactionGraph
-from dscent.types import Vertex, TimeDelta, Interaction, ReverseReachableVertex, ReverseReachabilitySet, \
+from dscent.graph import TransactionGraph, _ExplorationGraph
+from dscent.types import Vertex, TimeDelta, Interaction, TimedVertex, ReachabilitySet, \
     Candidates, Seed
 
 MY_LOCK = RLock()
@@ -55,7 +55,7 @@ class GraphCycleIterator:
         self._completed_tasks: dict[Timestamp, Future] = {}
 
         # Reverse reachability mapping: vertex -> sorted set of (_lower_time_limit, predecessor) pairs
-        self._reverse_reachability: dict[Vertex, ReverseReachabilitySet] = defaultdict(ReverseReachabilitySet)
+        self._reverse_reachability: dict[Vertex, ReachabilitySet] = defaultdict(ReachabilitySet)
 
         # Interval tracking for candidate cycles: vertex -> IntervalTree
         self._seed_intervals: dict[Vertex, IntervalTree] = defaultdict(IntervalTree)
@@ -97,7 +97,7 @@ class GraphCycleIterator:
 
         # Add reachability entry
         # S(b) ← S(b) ∪ {(a, t)}
-        target_reverse_reachability.append(ReverseReachableVertex(
+        target_reverse_reachability.append(TimedVertex(
             vertex=source, timestamp=current_timestamp
         ))
 
@@ -119,7 +119,7 @@ class GraphCycleIterator:
         target_reverse_reachability |= source_reverse_reachability
 
         # for (b, tb) ∈ S(b) do
-        cyclic_reachability = ReverseReachabilitySet(
+        cyclic_reachability = ReachabilitySet(
             v for v in target_reverse_reachability if v.vertex == target
         )
         if len(cyclic_reachability) == 0:
@@ -127,12 +127,9 @@ class GraphCycleIterator:
 
         # {c ∈ S(a), tc > tb}
         for cyclic_reachable in cyclic_reachability:
-            candidate_reachability = ReverseReachabilitySet(source_reverse_reachability)
+            candidate_reachability = ReachabilitySet(source_reverse_reachability)
 
-            candidate_reachability.prune(
-                lower_time_limit=cyclic_reachable.timestamp,
-                strictly_smaller=True
-            )
+            candidate_reachability.prune(lower_time_limit=cyclic_reachable.time)
 
             if len(candidate_reachability) == 0:
                 continue
@@ -142,13 +139,13 @@ class GraphCycleIterator:
             candidates.update(c.vertex for c in candidate_reachability)
 
             if len(candidates) > 1:
-                candidates.next_begin = cyclic_reachable.timestamp + self.omega
+                candidates.next_begin = cyclic_reachable.time + self.omega
                 # Output (b, [tb, t], C)
-                self._seed_intervals[target][cyclic_reachable.timestamp: current_timestamp] = candidates
+                self._seed_intervals[target][cyclic_reachable.time: current_timestamp] = candidates
 
         # Remove to avoid duplicate output
         # S(b) ← S(b) \ {(b, tb)}
-        self._reverse_reachability[target] = ReverseReachabilitySet(
+        self._reverse_reachability[target] = ReachabilitySet(
             v for v in target_reverse_reachability if v not in cyclic_reachability
         )
 
@@ -208,11 +205,18 @@ class GraphCycleIterator:
     def _constrained_depth_first_search(self, seed: Seed):
         seed.candidates.add(seed.vertex)
 
-        exploration_graph = (
+        exploration_graph = _ExplorationGraph(
             self._transaction_graph
             .time_slice(seed.begin, seed.end)
             .subgraph(seed.candidates)
         )
+        assert seed.vertex == next(iter(exploration_graph.nodes))
+
+        closing_time = dict.fromkeys(seed, np.inf)
+        unblock_list = defaultdict(set)
+
+
+
         # TODO: add logic for pairs u <-> v
         with self._finalize_lock:
             if self.logging:
