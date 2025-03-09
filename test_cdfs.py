@@ -39,6 +39,8 @@ seed = Seed("a", 1, 13, candidates)
 
 exploration_graph = ExplorationGraph(
     transaction_graph
-    .time_slice(seed.begin, seed.end, nodes=seed.candidates, closed=True)
+    .time_slice(seed.begin, seed.end, nodes=seed.candidates, closed=True),
+    root_vertex=seed.vertex
 )
-exploration_graph.simple_cycles(seed.vertex, seed.candidates.next_begin)
+for c in exploration_graph.simple_cycles(seed.candidates.next_begin):
+    print(str(c))

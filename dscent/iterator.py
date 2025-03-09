@@ -16,10 +16,11 @@ from intervaltree import IntervalTree, Interval
 from pandas import Timestamp
 from tqdm.auto import tqdm
 
-from dscent.graph import TransactionGraph, _ExplorationGraph
-from dscent.types import Vertex, TimeDelta, Interaction, TimedVertex, ReachabilitySet, \
+from dscent.graph import TransactionGraph, ExplorationGraph
+from dscent.types_ import (
+    Vertex, TimeDelta, Interaction, SingleTimedVertex, ReachabilitySet,
     Candidates, Seed
-
+)
 MY_LOCK = RLock()
 
 
@@ -97,7 +98,7 @@ class GraphCycleIterator:
 
         # Add reachability entry
         # S(b) ← S(b) ∪ {(a, t)}
-        target_reverse_reachability.append(TimedVertex(
+        target_reverse_reachability.append(SingleTimedVertex(
             vertex=source, timestamp=current_timestamp
         ))
 
@@ -120,7 +121,7 @@ class GraphCycleIterator:
 
         # for (b, tb) ∈ S(b) do
         cyclic_reachability = ReachabilitySet(
-            v for v in target_reverse_reachability if v.vertex == target
+            [v for v in target_reverse_reachability if v.vertex == target]
         )
         if len(cyclic_reachability) == 0:
             return
@@ -205,17 +206,12 @@ class GraphCycleIterator:
     def _constrained_depth_first_search(self, seed: Seed):
         seed.candidates.add(seed.vertex)
 
-        exploration_graph = _ExplorationGraph(
+        exploration_graph = ExplorationGraph(
             self._transaction_graph
-            .time_slice(seed.begin, seed.end)
-            .subgraph(seed.candidates)
+            .time_slice(seed.begin, seed.end, closed=True)
+            .subgraph(seed.candidates),
+            root_vertex=seed.vertex
         )
-        assert seed.vertex == next(iter(exploration_graph.nodes))
-
-        closing_time = dict.fromkeys(seed, np.inf)
-        unblock_list = defaultdict(set)
-
-
 
         # TODO: add logic for pairs u <-> v
         with self._finalize_lock:
@@ -225,7 +221,7 @@ class GraphCycleIterator:
                     exploration_graph=exploration_graph
                 )
 
-        return seed.begin
+        return exploration_graph.simple_cycles(seed.candidates.next_begin)
 
     def _submit_exploration_task(self, seed: Seed):
         while len(self._running_tasks) >= self.max_workers:
@@ -324,13 +320,7 @@ class GraphCycleIterator:
         log_line = self._format_log_line(log_line_values)
         self._log_stream.write(log_line)
 
-    def __iter__(self) -> "GraphCycleIterator":
-        """
-        Allows the GraphCycleIterator to be used as an iterator in a for-loop.
-        """
-        return self
-
-    def __next__(self):
+    def __iter__(self):
         if self._thread_pool is None:
             self._initialize_thread_pool()
 
@@ -357,8 +347,9 @@ class GraphCycleIterator:
             if self._iteration_count % self.cleanup_interval == 0:
                 self.cleanup()
 
-            # TODO: actually yield cycles from future result
-            self._completed_tasks = {}
+            for completed_task in self._completed_tasks.values():
+                yield from completed_task.result()
+            self._completed_tasks.clear()
 
             if (self._last_log_time - self.start_time) > self.logging_interval:
                 self._log()
@@ -366,4 +357,3 @@ class GraphCycleIterator:
         wait(self._running_tasks.values())
         self._thread_pool.shutdown()
         self._log_stream.flush()
-        raise StopIteration()

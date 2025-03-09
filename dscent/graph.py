@@ -88,9 +88,14 @@ class _ClosureManager(defaultdict[Vertex, Timestamp]):
 
 
 class ExplorationGraph(TransactionGraph):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, root_vertex: Vertex | None = None, **kwargs):
         super().__init__(*args, **kwargs)
+        self.graph["root_vertex"] = root_vertex
         self.closure = _ClosureManager()
+
+    @property
+    def root_vertex(self) -> Vertex:
+        return self.graph["root_vertex"]
 
     def cascade_closure(self, origin: Vertex, closing_time: Timestamp):
         dependencies = self.closure.dependencies[origin]
@@ -124,60 +129,17 @@ class ExplorationGraph(TransactionGraph):
 
         return nx.subgraph_view(self, filter_edge=activation_filter)
 
-    def _simple_cycles(self, root_vertex: Vertex, path: BundledPath) -> Timestamp:
-        *_, head = path
 
-        current_vertex = head.vertex
-        current_timestamp = head.begin()
-        self.closure[current_vertex] = current_timestamp
-        closing_time = 0
 
-        # Adjacency View
-        successor_view = self.activated_edges(current_timestamp)[current_vertex]
 
-        if root_vertex in successor_view:  # Cycle detected
-            timestamps = TimeSequence(successor_view[root_vertex])
-            closing_time = max(timestamps.end(), closing_time)
-            cycle = BundledPath(path)
-            cycle.append(MultiTimedVertex(vertex=root_vertex, timestamps=timestamps))
-            print(cycle)
-            # yield cycle
-
-        for successor_vertex, timestamps in successor_view.items():
-            if successor_vertex == root_vertex:
-                continue
-            timestamps = TimeSequence(timestamps)
-            timestamps.trim_after(upper_limit=self.closure[successor_vertex])
-            if len(timestamps) == 0:
-                continue
-
-            next_path = BundledPath(path)
-            next_path.append(MultiTimedVertex(vertex=successor_vertex, timestamps=timestamps))
-
-            new_closing_time = self._simple_cycles(root_vertex, next_path)
-            closing_time = max(new_closing_time, closing_time)
-
-            timestamps = TimeSequence(successor_view[successor_vertex])
-            timestamps.trim_before(new_closing_time)
-
-            if len(timestamps) > 0:  # TODO: check
-                self.closure.add_dependency(
-                    origin=successor_vertex,
-                    dependency=SingleTimedVertex(vertex=current_vertex, timestamp=timestamps.begin())
-                )
-        if closing_time > current_timestamp:
-            self.closure[current_vertex] = closing_time
-            self.cascade_closure(origin=current_vertex, closing_time=closing_time)
-
-        return closing_time
-
-    def simple_cycles(self, root_vertex: Vertex, next_candidates_begin_timestamp: Timestamp):
-        for successor_vertex in self.successors(root_vertex):
-            timestamps = TimeSequence(self[root_vertex][successor_vertex])
+    def simple_cycles(self, next_candidates_begin_timestamp: Timestamp):
+        all_cycles = []
+        for successor_vertex in self.successors(self.root_vertex):
+            timestamps = TimeSequence(self[self.root_vertex][successor_vertex])
             timestamps.trim_after(next_candidates_begin_timestamp)
-            # yield from self._simple_cycles(
-            self._simple_cycles(
-                root_vertex,
-                BundledPath([MultiTimedVertex(vertex=successor_vertex, timestamps=timestamps)])
+            _, cycles = self._simple_cycles(
+                path=BundledPath([MultiTimedVertex(vertex=successor_vertex, timestamps=timestamps)]),
+                cycles=[]
             )
-
+            all_cycles.extend(cycles)
+        return all_cycles

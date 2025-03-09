@@ -138,9 +138,13 @@ class MultiTimedVertex(TimedVertexABC):
 
 
 class ReachabilitySet:
+    vertices: list[Vertex]
+    timestamps: list[Timestamp]
+
     def __init__(
             self,
-            vertices: list[SingleTimedVertex] | None = None,
+            timed_vertices: Iterable[SingleTimedVertex] | ReachabilitySet | None = None,
+            vertices: list[Vertex] | None = None,
             timestamps: list[Timestamp] | TimeSequence | None = None
     ):
         if vertices is None:
@@ -148,8 +152,17 @@ class ReachabilitySet:
         if timestamps is None:
             timestamps = TimeSequence()
 
-        assert len(vertices) == len(timestamps), (
-            f"Mismatch between number of vertices ({len(vertices)}) and timestamps ({len(timestamps)})."
+        if timed_vertices is not None:
+            if isinstance(timed_vertices, ReachabilitySet):
+                vertices = timed_vertices.vertices
+                timestamps = timed_vertices.timestamps
+            else:
+                for timed_vertex in timed_vertices:
+                    vertices.append(timed_vertex.vertex)
+                    timestamps.append(timed_vertex.timestamp)
+
+        assert timestamps is None or vertices is None or len(list(vertices)) == len(timestamps), (
+            f"Mismatch between number of vertices {vertices} and timestamps {timestamps}."
         )
         if not isinstance(timestamps, TimeSequence):
             assert sorted(timestamps) == timestamps, (
@@ -200,7 +213,7 @@ class ReachabilitySet:
     def __getitem__(self, index: int | slice) -> SingleTimedVertex | ReachabilitySet:
         """Allows indexed access to paired (vertex, timestamp) tuples."""
         if isinstance(index, slice):
-            return ReachabilitySet(self.vertices[index], self.timestamps[index])
+            return ReachabilitySet(vertices=self.vertices[index], timestamps=self.timestamps[index])
         return SingleTimedVertex(self.vertices[index], self.timestamps[index])
 
     def __iter__(self) -> Iterable[SingleTimedVertex]:
