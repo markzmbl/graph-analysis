@@ -9,27 +9,33 @@ import numpy as np
 from matplotlib import pyplot as plt
 
 from dscent.graph import TransactionGraph, ExplorationGraph
-from dscent.types_ import Seed, Vertex, Timestamp, ReachabilitySet, TimedVertex
+from dscent.types_ import Seed, Vertex, Timestamp, ReachabilitySet, SingleTimedVertex, Candidates
 
 edges = [
     ("a", "b", 1),
-    ("b", "d", 5),
-    ("a", "b", 7),
-    ("d", "a", 7),
-    ("b", "d", 8),
-    ("d", "e", 8),
-    ("d", "f", 9),
-    ("d", "a", 10),
-    ("e", "c", 10),
-    ("c", "d", 11),
+    ("a", "c", 5),
+    ("b", "c", 5),
+    ("c", "d", 6),
+    ("c", "e", 7),
+    ("b", "c", 8),
+    ("d", "a", 8),
+    ("b", "c", 10),
+    ("e", "f", 10),
+    ("c", "h", 11),
     ("f", "a", 12),
-    ("d", "b", 13),
+    ("h", "j", 13),
+    ("h", "k", 14),
+    ("k", "j", 15),
+    ("j", "b", 16),
+    ("b", "a", 17),
 ]
 
 transaction_graph = TransactionGraph()
 for u, v, t in edges:
     transaction_graph.add_edge(u, v, key=t)
-seed = Seed("a", 1, 13, transaction_graph.nodes)
+candidates = Candidates(transaction_graph.nodes)
+candidates.next_begin = 17
+seed = Seed("a", 1, 13, candidates)
 
 exploration_graph = ExplorationGraph(
     transaction_graph

@@ -3,12 +3,16 @@ from __future__ import annotations
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
+from copy import deepcopy
+from pprint import pprint
 
 import networkx as nx
 import numpy as np
+from nbclient.client import timestamp
 from networkx.classes.filters import show_nodes, no_filter
 
-from dscent.types_ import Timestamp, TimeDelta, ReachabilitySet, TimedVertex, Vertex
+from dscent.types_ import Timestamp, TimeDelta, ReachabilitySet, SingleTimedVertex, Vertex, TimeSequence, \
+    MultiTimedVertex, BundledPath
 
 
 class TransactionGraph(nx.MultiDiGraph):
@@ -46,10 +50,10 @@ class TransactionGraph(nx.MultiDiGraph):
     ):
         """
         Returns a subgraph view that filters edges based on the temporal constraints.
-        Assumes edges have a time as their key.
+        Assumes edges have a timestamp as their origin.
 
-        :param begin: Minimum time (inclusive)
-        :param end: Maximum time (inclusive)
+        :param begin: Minimum timestamp (inclusive)
+        :param end: Maximum timestamp (inclusive)
         :return: A subgraph view with filtered edges
         """
         begin_filter = no_filter
@@ -63,7 +67,6 @@ class TransactionGraph(nx.MultiDiGraph):
         def interval_filter(u, v, key):
             return begin_filter(u, v, key) and end_filter(u, v, key)
 
-
         return nx.subgraph_view(
             self,
             filter_node=show_nodes(nodes) if nodes is not None else no_filter,
@@ -74,69 +77,107 @@ class TransactionGraph(nx.MultiDiGraph):
         self.remove_edges_from(list(self.time_slice(end=lower_time_limit).edges(keys=True)))
 
 
+class _ClosureManager(defaultdict[Vertex, Timestamp]):
+    def __init__(self):
+        super().__init__(lambda: np.inf)
+        self.dependencies: defaultdict[Vertex, ReachabilitySet] = defaultdict(ReachabilitySet)
+
+    def add_dependency(self, origin: Vertex, dependency: SingleTimedVertex):
+        self.dependencies[origin].trim_after(dependency.timestamp)
+        self.dependencies[origin].append(dependency)
+
+
 class ExplorationGraph(TransactionGraph):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.closing_time = defaultdict(lambda: np.inf)
-        self.unblock_list = defaultdict(ReachabilitySet)
+        self.closure = _ClosureManager()
+
+    def cascade_closure(self, origin: Vertex, closing_time: Timestamp):
+        dependencies = self.closure.dependencies[origin]
+        idx = dependencies.get_trim_index(closing_time, strict=True, left=False)
+
+        for dependency in dependencies[idx:]:
+            timestamps = TimeSequence(self[dependency.vertex][origin])
+            timestamps.trim_before(closing_time, strict=False)
+
+            if len(timestamps) > 0:
+                self.closure.add_dependency(
+                    origin=origin,
+                    dependency=SingleTimedVertex(vertex=dependency.vertex, timestamp=timestamps.begin())
+                )
+            timestamps.trim_after(closing_time)
+            if len(timestamps) > 0 and timestamps.end() > self.closure[dependency.vertex]:
+                self.closure[dependency.vertex] = timestamps.end()
+                self.cascade_closure(origin=dependency.vertex, closing_time=timestamps.end())
+
+        del dependencies[idx:]
 
     def activated_edges(self, current_timestamp: Timestamp, strict=False):
         begin_filter = self._begin_filter(begin=current_timestamp, strict=True)
 
         def activation_filter(u, v, key):
-            closing_time = self.closing_time[v]
+            closing_time = self.closure[v]
             return (
-                begin_filter(u, v, key)
-                and (key <= closing_time if strict else key < closing_time)
+                    begin_filter(u, v, key)
+                    and (key < closing_time if strict else key <= closing_time)
             )
 
         return nx.subgraph_view(self, filter_edge=activation_filter)
 
-    def simple_cycles(self, root_vertex: Vertex, ):
-        recursion_stack: list[tuple[Timestamp | None, ReachabilitySet]] = []
+    def _simple_cycles(self, root_vertex: Vertex, path: BundledPath) -> Timestamp:
+        *_, head = path
 
+        current_vertex = head.vertex
+        current_timestamp = head.begin()
+        self.closure[current_vertex] = current_timestamp
+        closing_time = 0
+
+        # Adjacency View
+        successor_view = self.activated_edges(current_timestamp)[current_vertex]
+
+        if root_vertex in successor_view:  # Cycle detected
+            timestamps = TimeSequence(successor_view[root_vertex])
+            closing_time = max(timestamps.end(), closing_time)
+            cycle = BundledPath(path)
+            cycle.append(MultiTimedVertex(vertex=root_vertex, timestamps=timestamps))
+            print(cycle)
+            # yield cycle
+
+        for successor_vertex, timestamps in successor_view.items():
+            if successor_vertex == root_vertex:
+                continue
+            timestamps = TimeSequence(timestamps)
+            timestamps.trim_after(upper_limit=self.closure[successor_vertex])
+            if len(timestamps) == 0:
+                continue
+
+            next_path = BundledPath(path)
+            next_path.append(MultiTimedVertex(vertex=successor_vertex, timestamps=timestamps))
+
+            new_closing_time = self._simple_cycles(root_vertex, next_path)
+            closing_time = max(new_closing_time, closing_time)
+
+            timestamps = TimeSequence(successor_view[successor_vertex])
+            timestamps.trim_before(new_closing_time)
+
+            if len(timestamps) > 0:  # TODO: check
+                self.closure.add_dependency(
+                    origin=successor_vertex,
+                    dependency=SingleTimedVertex(vertex=current_vertex, timestamp=timestamps.begin())
+                )
+        if closing_time > current_timestamp:
+            self.closure[current_vertex] = closing_time
+            self.cascade_closure(origin=current_vertex, closing_time=closing_time)
+
+        return closing_time
+
+    def simple_cycles(self, root_vertex: Vertex, next_candidates_begin_timestamp: Timestamp):
         for successor_vertex in self.successors(root_vertex):
-            timestamp_view = self[root_vertex][successor_vertex]
-            recursion_stack.append((
-                0,  # lastp
-                ReachabilitySet([TimedVertex(vertex=successor_vertex, time=timestamp_view)])
-            ))
+            timestamps = TimeSequence(self[root_vertex][successor_vertex])
+            timestamps.trim_after(next_candidates_begin_timestamp)
+            # yield from self._simple_cycles(
+            self._simple_cycles(
+                root_vertex,
+                BundledPath([MultiTimedVertex(vertex=successor_vertex, timestamps=timestamps)])
+            )
 
-        while recursion_stack:
-            lastp, path = recursion_stack.pop()
-            *_, head = path
-            assert isinstance(head.time, Iterable)
-            assert sorted(head.time) == head.time
-
-            current_vertex = head.vertex
-            current_timestamp = head.begin()
-            self.closing_time[current_vertex] = current_timestamp
-
-            # Adjacency View
-            successor_view = self.activated_edges(current_timestamp)[current_vertex]
-            strict_successor_view = self.activated_edges(current_timestamp, strict=True)[current_vertex]
-
-            if successor_view[root_vertex]:  # Cycle detected
-                timestamps = list(successor_view[root_vertex])
-                assert sorted(timestamps) == timestamps
-                lastp = max(next(reversed(timestamps)), lastp)
-                yield path + [TimedVertex(vertex=root_vertex, time=timestamps)]
-
-            for successor_vertex in successor_view:
-                if successor_vertex == root_vertex:
-                    continue
-
-                timestamps = list(strict_successor_view[current_vertex][successor_vertex])
-                assert sorted(timestamps) == timestamps
-
-                if len(timestamps) == 0:
-                    continue
-
-                recursion_stack.append((  # type: ignore
-                    lastp,
-                    path + [TimedVertex(vertex=current_vertex, time=timestamps)]  # type: ignore
-                ))
-                minimum_timestamp = timestamps[bisect_right(timestamps, lastp)]
-                self.unblock_list[successor_vertex].append(Timestamp(vertex=current_vertex, time=minimum_timestamp))
-
-            self.unblock(current_vertex, lastp)

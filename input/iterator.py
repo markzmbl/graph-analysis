@@ -205,7 +205,7 @@ class GraphEdgeIterator:
         A `None` entry indicates no further graphs are available.
     current_edges : Iterator[Tuple[int, int, int]]
         An iterator over the edges of the currently-active _transaction_graph.
-        Each edge is a 3-tuple `(u, v, time)`.
+        Each edge is a 3-tuple `(u, v, timestamp)`.
     executor : ThreadPoolExecutor
         A thread pool executor (with `max_workers=1` by default) used to
         load graphs asynchronously in the background.
@@ -219,13 +219,13 @@ class GraphEdgeIterator:
     -----
     - Each file is loaded asynchronously by `read_graph` in a separate thread.
     - The edges of the currently loaded _transaction_graph are sorted by their _lower_time_limit,
-      so we can yield them in ascending time order.
+      so we can yield them in ascending timestamp order.
     - Once a file's edges are exhausted, this iterator moves on to the next
       buffer slot (the next _transaction_graph) and triggers a load of the subsequent file
       if available.
-    - If multiple files have overlapping time ranges, only local sorting
+    - If multiple files have overlapping timestamp ranges, only local sorting
       within each file is performed. This class does not perform a global
-      merge of overlapping time intervals from multiple files. The assumption
+      merge of overlapping timestamp intervals from multiple files. The assumption
       is each file covers a distinct or mostly chronological partition.
       You may need a different approach if you want a fully global sort
       across all files.
@@ -235,7 +235,7 @@ class GraphEdgeIterator:
     >>> # Suppose you have _transaction_graph files for a range of dates:
     >>> edge_iter = GraphEdgeIterator(start_date="2023-01-01", end_date="2023-01-31", buffer_count=2)
     >>> for (u, v, t) in edge_iter:
-    ...     # Process each edge in ascending time order
+    ...     # Process each edge in ascending timestamp order
     ...     print(u, v, t)
     """
 
@@ -294,7 +294,7 @@ class GraphEdgeIterator:
     def _resolve_buffer(self, index: int):
         """
         Blocks until the _transaction_graph in self.buffer[index] is fully loaded (Future resolved),
-        then sets the result's edges (sorted by time) as the current_edges iterator.
+        then sets the result's edges (sorted by timestamp) as the current_edges iterator.
 
         Parameters
         ----------
@@ -313,7 +313,7 @@ class GraphEdgeIterator:
 
         # Wait for the future to complete and get the result
         graph = self.buffer[index].result()
-        # Sort the edges by their time (third element of the edge tuple)
+        # Sort the edges by their timestamp (third element of the edge tuple)
         self.current_edges = iter(sorted(graph.edges, key=lambda item: (item[2], item[0], item[1])))
 
     def __iter__(self) -> "GraphEdgeIterator":

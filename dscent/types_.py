@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 from _bisect import bisect_right, bisect_left
+from abc import ABC
 from collections.abc import Iterable
+from copy import deepcopy
+from dataclasses import dataclass
 from typing import Hashable, NamedTuple
+
+from nbclient.client import timestamp
 
 Vertex = Hashable
 Timestamp = int
@@ -15,44 +20,203 @@ class Interaction(NamedTuple):
     timestamp: Timestamp
 
 
-class TimedVertex(NamedTuple):
-    vertex: Vertex
-    time: Timestamp | Iterable[Timestamp]
+class TimeSequence(list[Timestamp]):
+    """A sorted sequence of timestamps with efficient trimming methods."""
+
+    def __init__(self, timestamps: Iterable[Timestamp] | None = None):
+        """
+        Initializes a sorted sequence of timestamps.
+
+        :param timestamps: A list of datetime objects.
+        """
+        if timestamps is None:
+            timestamps = []
+        assert list(timestamps) == sorted(timestamps), "All elements must sorted"
+        super().__init__(timestamps)  # Ensure the list is always sorted
 
     def begin(self) -> Timestamp:
-        """Returns the minimum time if time is iterable, else returns the time itself."""
-        if isinstance(self.time, Iterable):
-            return next(iter(self.time))
-        return self.time
+        """
+        Returns the first timestamp in the sequence.
+        Raises a ValueError if the sequence is empty.
+        """
+        try:
+            return next(iter(self))
+        except StopIteration:
+            raise ValueError("TimeSequence is empty, cannot retrieve the first element.")
 
-    def __lt__(self, other: "TimedVertex") -> bool:
+    def end(self) -> Timestamp:
+        """
+        Returns the last timestamp in the sequence.
+        Raises a ValueError if the sequence is empty.
+        """
+        try:
+            return next(reversed(self))
+        except StopIteration:
+            raise ValueError("TimeSequence is empty, cannot retrieve the last element.")
+
+    def get_trim_index(self, limit: Timestamp, strict: bool, left: bool) -> int:
+        """
+        Returns the appropriate index for trimming operations using bisect.
+
+        :param limit: The threshold timestamp.
+        :param strict: Determines whether to exclude the limit itself.
+        :param left: If True, trims from the left (before limit). Otherwise, trims from the right (after limit).
+        :return: The index to slice the list.
+        """
+        if left:
+            return bisect_right(self, limit) if strict else bisect_left(self, limit)
+        else:
+            return bisect_left(self, limit) if strict else bisect_right(self, limit)
+
+    def trim_before(self, lower_limit: Timestamp, strict: bool = True) -> TimeSequence:
+        """
+        Removes timestamps before the given upper_limit.
+
+        :param upper_limit: The threshold timestamp.
+        :param strict: If True, removes elements strictly before the upper_limit.
+                       If False, removes elements before or equal to the upper_limit.
+        :return: A new TimeSequence with the filtered timestamps.
+        """
+        idx = self.get_trim_index(lower_limit, strict, left=True)
+        del self[: idx]
+
+    def trim_after(self, upper_limit: Timestamp, strict: bool = True) -> TimeSequence:
+        """
+        Removes timestamps after the given upper_limit.
+
+        :param upper_limit: The threshold timestamp.
+        :param strict: If True, removes elements strictly after the upper_limit.
+                       If False, removes elements after or equal to the upper_limit.
+        :return: A new TimeSequence with the filtered timestamps.
+        """
+        idx = self.get_trim_index(upper_limit, strict, left=False)
+        del self[idx:]
+
+
+@dataclass
+class TimedVertexABC(ABC):
+    vertex: Vertex
+
+    def begin(self) -> Timestamp:
+        """Returns the minimum timestamp."""
+        raise NotImplementedError
+
+    def end(self) -> Timestamp:
+        """Returns the maximum timestamp."""
+        raise NotImplementedError
+
+    def __lt__(self, other: TimedVertexABC) -> bool:
         return (self.begin(), self.vertex) < (other.begin(), other.vertex)
 
 
-class ReachabilitySet(list[TimedVertex]):
-    def prune(self, lower_time_limit: Timestamp, strict=True) -> None:
+@dataclass
+class SingleTimedVertex(TimedVertexABC):
+    timestamp: Timestamp
+
+    def begin(self) -> Timestamp:
+        return self.timestamp
+
+    def end(self):
+        return self.timestamp
+
+    def __str__(self):
+        return f"({self.vertex}, {repr(self.timestamp)})"
+
+
+@dataclass
+class MultiTimedVertex(TimedVertexABC):
+    timestamps: TimeSequence
+
+    def begin(self) -> Timestamp:
+        return self.timestamps.begin()
+
+    def end(self):
+        return self.timestamps.end()
+
+    def __str__(self):
+        return f"({self.vertex}, [{", ".join(map(str, self.timestamps))}])"
+
+
+class ReachabilitySet:
+    def __init__(
+            self,
+            vertices: list[SingleTimedVertex] | None = None,
+            timestamps: list[Timestamp] | TimeSequence | None = None
+    ):
+        if vertices is None:
+            vertices = []
+        if timestamps is None:
+            timestamps = TimeSequence()
+
+        assert len(vertices) == len(timestamps), (
+            f"Mismatch between number of vertices ({len(vertices)}) and timestamps ({len(timestamps)})."
+        )
+        if not isinstance(timestamps, TimeSequence):
+            assert sorted(timestamps) == timestamps, (
+                f"Timestamps must be in sorted order when not an instance of TimeSequence. Provided: {timestamps}"
+            )
+        self.vertices = vertices
+        self.timestamps = timestamps
+
+    def get_trim_index(self, limit: Timestamp, strict: bool, left: bool) -> int:
+        return self.timestamps.get_trim_index(limit=limit, strict=strict, left=left)
+
+    def trim_before(self, lower_limit: Timestamp, strict=True) -> None:
         """
         Return the pruned  reachability set where stale entries are removed.
-        Assumes reachability_set is sorted by time_x.
-        Uses binary search (`bisect_left`) for efficient pruning.
 
-        :param strict: {(v, t) | t > lower_time_limit}
+        :param upper_limit:
+        :param strict: {(v, t) | t > upper_limit}
         """
-        # assert sorted(set(self)) == self
+        idx = self.get_trim_index(lower_limit, strict, left=True)
+        del self.vertices[: idx]
+        del self.timestamps[: idx]
 
-        bisect_function = bisect_left if strict else bisect_right
+    def trim_after(self, upper_limit: Timestamp, strict=True) -> None:
+        """
+        Return the pruned reachability set where most recent entries are removed.
 
-        # Use bisect with key parameter to find the first valid index
-        index = bisect_function(self, lower_time_limit, key=lambda item: item.time)
+        :param upper_limit:
+        :param strict: {(v, t) | t < upper_limit}
+        """
+        idx = self.get_trim_index(upper_limit, strict, left=False)
+        del self.vertices[: idx]
+        del self.timestamps[: idx]
 
-        # for i, (v, t) in enumerate(self):
-        #     outside = t <= lower_time_limit if strict else t < lower_time_limit
-        #     assert outside and i < index or not outside and i >= index
+    def append(self, item: SingleTimedVertex):
+        """Appends a new vertex and its timestamp."""
+        self.vertices.append(item.vertex)
+        self.timestamps.append(item.timestamp)
 
-        # Update the list in place
-        del self[:index]
+    def extend(self, other: ReachabilitySet):
+        """Extends the set with another ReachabilitySet."""
+        self.vertices.extend(other.vertices)
+        self.timestamps.extend(other.timestamps)
 
-    def __ior__(self, other: ReachabilitySet) -> ReachabilitySet:
+    def __len__(self):
+        """Returns the number of stored elements."""
+        return len(self.vertices)
+
+    def __getitem__(self, index: int | slice) -> SingleTimedVertex | ReachabilitySet:
+        """Allows indexed access to paired (vertex, timestamp) tuples."""
+        if isinstance(index, slice):
+            return ReachabilitySet(self.vertices[index], self.timestamps[index])
+        return SingleTimedVertex(self.vertices[index], self.timestamps[index])
+
+    def __iter__(self) -> Iterable[SingleTimedVertex]:
+        """Enables iteration, returning SingleTimedVertex objects."""
+        return (
+            SingleTimedVertex(vertex, timestamp)
+            for vertex, timestamp
+            in zip(self.vertices, self.timestamps)
+        )
+
+    def __delitem__(self, index: int | slice):
+        """Deletes elements by index or slice."""
+        del self.vertices[index]
+        del self.timestamps[index]
+
+    def __or__(self, other: ReachabilitySet) -> ReachabilitySet:
         """Merge two sorted lists of unique tuples while preserving order and uniqueness."""
         i, j = 0, 0
         merged = ReachabilitySet()
@@ -74,17 +238,34 @@ class ReachabilitySet(list[TimedVertex]):
         merged.extend(self[i:])
         merged.extend(other[j:])
 
-        # assert sorted(set(self + other)) == merged
-
         return merged
 
+
+class BundledPath(list[MultiTimedVertex]):
+    def append(self, item: MultiTimedVertex):
+        item = deepcopy(item)
+
+        if len(self) > 0:
+            *_, head = self
+            item.timestamps.trim_before(head.begin())
+
+            if len(item.timestamps) == 0:
+                raise ValueError("Timestamps are incompatible")
+
+            for predecessor, successor in reversed(list(zip(self[:-1], self[1:]))):
+                predecessor.timestamps.trim_after(successor.timestamps.end())
+
+        super().append(item)
+
+    def __str__(self):
+        return f"{', '.join(map(str, self))}"
 
 class Candidates(set[Vertex]):
     """
     A specialized set to track candidates for cycle formation.
     """
 
-    next_begin: Timestamp | None = None  # Start time of the next interval, if available
+    next_begin: Timestamp | None = None  # Start timestamp of the next interval, if available
 
 
 class Seed(NamedTuple):

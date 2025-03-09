@@ -38,14 +38,14 @@ class GraphCycleIterator:
             logging_interval: int = 60
     ) -> None:
         """
-        Initializes the GraphCycleIterator with streaming edges, a maximum time
+        Initializes the GraphCycleIterator with streaming edges, a maximum timestamp
         window, and a prune interval.
         """
         self._interactions = iter(interactions)  # Stream of edges
         self._iteration_count: int = 0  # Track number of processed edges
 
         self.cleanup_interval: int = cleanup_interval  # Interval for pruning old data
-        self.omega: TimeDelta = omega  # Maximum time window for relevant edges
+        self.omega: TimeDelta = omega  # Maximum timestamp window for relevant edges
 
         self._thread_pool: ThreadPoolExecutor | None = None
         self._pickup_lock: Lock | None = None
@@ -102,7 +102,7 @@ class GraphCycleIterator:
         ))
 
         # S(b) ← S(b)\{(x, tx) ∈ S(b) | tx ≤ t−ω}
-        target_reverse_reachability.prune(self._lower_time_limit)
+        target_reverse_reachability.trim_before(self._lower_time_limit)
 
         if source not in self._reverse_reachability:
             return
@@ -112,7 +112,7 @@ class GraphCycleIterator:
 
         # Prune old entries for relevant edges
         # S(a) ← S(a)\{(x,tx) ∈ S(a) | tx ≤ t−ω}
-        source_reverse_reachability.prune(self._lower_time_limit)
+        source_reverse_reachability.trim_before(self._lower_time_limit)
 
         # Propagate reachability
         # S(b) ← S(b) ∪ S(a)
@@ -129,7 +129,7 @@ class GraphCycleIterator:
         for cyclic_reachable in cyclic_reachability:
             candidate_reachability = ReachabilitySet(source_reverse_reachability)
 
-            candidate_reachability.prune(lower_time_limit=cyclic_reachable.time)
+            candidate_reachability.trim_before(lower_limit=cyclic_reachable.timestamp)
 
             if len(candidate_reachability) == 0:
                 continue
@@ -139,9 +139,9 @@ class GraphCycleIterator:
             candidates.update(c.vertex for c in candidate_reachability)
 
             if len(candidates) > 1:
-                candidates.next_begin = cyclic_reachable.time + self.omega
+                candidates.next_begin = cyclic_reachable.timestamp + self.omega
                 # Output (b, [tb, t], C)
-                self._seed_intervals[target][cyclic_reachable.time: current_timestamp] = candidates
+                self._seed_intervals[target][cyclic_reachable.timestamp: current_timestamp] = candidates
 
         # Remove to avoid duplicate output
         # S(b) ← S(b) \ {(b, tb)}
@@ -151,7 +151,7 @@ class GraphCycleIterator:
 
     def _combine_seeds(self, v: Hashable) -> None:
         """
-        Merges adjacent or overlapping intervals for vertex `v` within the allowed time window.
+        Merges adjacent or overlapping intervals for vertex `v` within the allowed timestamp window.
         """
         if v not in self._seed_intervals:
             return
@@ -247,7 +247,7 @@ class GraphCycleIterator:
         for vertex in list(self._reverse_reachability):
             reverse_reachability = self._reverse_reachability[vertex]
             # S(x) ← S(x)\{(y,ty) ∈ S(x) | ty ≤ t−ω}
-            reverse_reachability.prune(self._lower_time_limit)
+            reverse_reachability.trim_before(self._lower_time_limit)
             if len(reverse_reachability) == 0:
                 del self._reverse_reachability[vertex]
 
@@ -266,11 +266,11 @@ class GraphCycleIterator:
                 else seed_interval_begins[0]
             )
 
-            # Update the minimum graph begin time if the new value is greater
+            # Update the minimum graph begin timestamp if the new value is greater
             if current_seed_interval_minimum > self._minimum_graph_begin:
                 self._minimum_graph_begin = current_seed_interval_minimum
 
-                # If the updated minimum graph begin exceeds the transaction graph's begin time,
+                # If the updated minimum graph begin exceeds the transaction graph's begin timestamp,
                 # prune the graph to remove data older than the new minimum
                 if self._minimum_graph_begin > self._transaction_graph.begin():
                     self._transaction_graph.prune(lower_time_limit=self._minimum_graph_begin)
