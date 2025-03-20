@@ -6,7 +6,7 @@ from input.iterator import GraphEdgeIterator
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Process graph interactions and cycles with 2SCENT.")
+    parser = argparse.ArgumentParser(description="Process sub_graph interactions and cycles with 2SCENT.")
     parser.add_argument("--start-date", type=str, default="2020-01-01", help="Start date (YYYY-MM-DD)")
     parser.add_argument("--end-date", type=str, default="2020-01-02", help="End date (YYYY-MM-DD)")
     parser.add_argument("--omega", type=int, default=10, help="Omega value to use")
@@ -20,7 +20,7 @@ def main():
 
     """Writes a fresh CSV file whenever requested"""
     with tempfile.TemporaryDirectory(dir=tempfile.tempdir) as temp_dir:
-        temp_path = f"{temp_dir}/graph.csv"
+        temp_path = f"{temp_dir}/sub_graph.csv"
 
         with open(temp_path, "w") as temp_file:
             for u, v, t in GraphEdgeIterator(args.start_date, args.end_date):

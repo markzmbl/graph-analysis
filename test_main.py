@@ -11,7 +11,7 @@ from dscent.iterator import GraphCycleIterator
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Process graph interactions and cycles.")
+    parser = argparse.ArgumentParser(description="Process sub_graph interactions and cycles.")
     parser.add_argument("--start-date", type=str, default="2020-01-01", help="Start date (YYYY-MM-DD)")
     parser.add_argument("--end-date", type=str, default="2020-02-01", help="End date (YYYY-MM-DD)")
     parser.add_argument("--omega", type=int, default=10, help="Omega value to use")

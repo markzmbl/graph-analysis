@@ -3,11 +3,8 @@ from __future__ import annotations
 from _bisect import bisect_right, bisect_left
 from abc import ABC
 from collections.abc import Iterable
-from copy import deepcopy
 from dataclasses import dataclass
 from typing import Hashable, NamedTuple
-
-from nbclient.client import timestamp
 
 Vertex = Hashable
 Timestamp = int
@@ -256,19 +253,27 @@ class ReachabilitySet:
 
 class BundledPath(list[MultiTimedVertex]):
     def append(self, item: MultiTimedVertex):
-        item = deepcopy(item)
-
         if len(self) > 0:
             *_, head = self
-            item.timestamps.trim_before(head.begin())
-
+            idx = (
+                item.timestamps.get_trim_index(head.begin(), strict=True, left=True)
+                if item.begin() > head.begin()
+                else 0
+            )
+            item.timestamps = TimeSequence(item.timestamps[idx:])  # Copy and trim
             if len(item.timestamps) == 0:
-                raise ValueError("Timestamps are incompatible")
-
-            for predecessor, successor in reversed(list(zip(self[:-1], self[1:]))):
-                predecessor.timestamps.trim_after(successor.timestamps.end())
+                raise ValueError
+        else:
+            item.timestamps = TimeSequence(item.timestamps)  # Copy
 
         super().append(item)
+        for predecessor, successor in reversed(list(zip(self[:-1], self[1:]))):
+            # Check if predecessor timestamps need trimming
+            if predecessor.end() > successor.end():
+                idx = predecessor.timestamps.get_trim_index(successor.end(), strict=True, left=False)
+                if idx == 0:
+                    raise ValueError
+                predecessor.timestamps = TimeSequence(predecessor.timestamps[: idx])  # Copy and trim
 
     def __str__(self):
         return f"{', '.join(map(str, self))}"

@@ -5,23 +5,33 @@ import time
 from collections import defaultdict, Counter
 from collections.abc import Iterator, Hashable
 from concurrent.futures import Future, wait, FIRST_COMPLETED
-from concurrent.futures.thread import ThreadPoolExecutor
-from tempfile import TemporaryFile, NamedTemporaryFile
-from threading import RLock, Lock, Event
-from time import sleep
+from concurrent.futures.process import ProcessPoolExecutor
+from multiprocessing import Lock
 
 import numpy as np
 import psutil
 from intervaltree import IntervalTree, Interval
+from networkx.classes import MultiDiGraph
 from pandas import Timestamp
-from tqdm.auto import tqdm
 
 from dscent.graph import TransactionGraph, ExplorationGraph
+from dscent.lock import ReaderWriterLock
 from dscent.types_ import (
     Vertex, TimeDelta, Interaction, SingleTimedVertex, ReachabilitySet,
     Candidates, Seed
 )
-MY_LOCK = RLock()
+
+
+def _constrained_depth_first_search(exploration_graph: ExplorationGraph, seed: Seed):
+
+    # with self._finalize_lock:
+    #     if self.logging:
+    #         self._log(
+    #             exploration_interval=Interval(seed.begin, seed.end),
+    #             exploration_graph=exploration_graph
+    #         )
+
+    return exploration_graph.simple_cycles(seed.candidates.next_begin)
 
 
 class GraphCycleIterator:
@@ -48,8 +58,8 @@ class GraphCycleIterator:
         self.cleanup_interval: int = cleanup_interval  # Interval for pruning old data
         self.omega: TimeDelta = omega  # Maximum timestamp window for relevant edges
 
-        self._thread_pool: ThreadPoolExecutor | None = None
-        self._pickup_lock: Lock | None = None
+        self._pool: ProcessPoolExecutor | None = None
+        self._graph_lock: ReaderWriterLock = ReaderWriterLock()
         self._finalize_lock: Lock | None = None
         self.max_workers = max_workers  # Maximum number of active workers
         self._running_tasks: dict[Timestamp, Future] = {}
@@ -65,7 +75,7 @@ class GraphCycleIterator:
         self._primed_seeds: list[Seed] = []
         self._minimum_graph_begin = 0
 
-        # Dynamic directed graph with edge removal enabled
+        # Dynamic directed sub_graph with edge removal enabled
         self._transaction_graph = TransactionGraph()
 
         self.start_time = time.monotonic()
@@ -80,8 +90,7 @@ class GraphCycleIterator:
             self._last_log_time = self.start_time
 
     def _initialize_thread_pool(self):
-        self._thread_pool = ThreadPoolExecutor(max_workers=self.max_workers)
-        self._pickup_lock = Lock()
+        self._pool = ProcessPoolExecutor(max_workers=self.max_workers)
         self._finalize_lock = Lock()
 
     def _update_reverse_reachability(self, interaction: Interaction) -> None:
@@ -203,40 +212,46 @@ class GraphCycleIterator:
                 self._primed_seeds.append(seed)
             interval_tree.remove_envelop(*lower_time_range)
 
-    def _constrained_depth_first_search(self, seed: Seed):
-        seed.candidates.add(seed.vertex)
-
-        exploration_graph = ExplorationGraph(
-            self._transaction_graph
-            .time_slice(seed.begin, seed.end, closed=True)
-            .subgraph(seed.candidates),
-            root_vertex=seed.vertex
-        )
-
-        # TODO: add logic for pairs u <-> v
-        with self._finalize_lock:
-            if self.logging:
-                self._log(
-                    exploration_interval=Interval(seed.begin, seed.end),
-                    exploration_graph=exploration_graph
-                )
-
-        return exploration_graph.simple_cycles(seed.candidates.next_begin)
-
-    def _submit_exploration_task(self, seed: Seed):
+    def _submit_exploration_task(self, sub_graph: ExplorationGraph, seed: Seed):
+        # TODO move to _found_cycles
+        # Get currently done tasks
+        all_done_tasks = {v for k, v in self._running_tasks.items() if v.done()}
+        # Wait if necessary
         while len(self._running_tasks) >= self.max_workers:
-            done_tasks, _ = wait(self._running_tasks.values(), return_when=FIRST_COMPLETED)
-            for seed_begin, task in list(self._running_tasks.items()):
-                if task in done_tasks:
-                    self._completed_tasks[seed_begin] = self._running_tasks.pop(seed_begin)
-        task = self._thread_pool.submit(self._constrained_depth_first_search, seed)
+            waited_done_tasks, _ = wait(self._running_tasks.values(), return_when=FIRST_COMPLETED)
+            all_done_tasks.update(waited_done_tasks)
+
+        # Pop from _running_tasks, put into _completed_tasks
+        for seed_begin, task in list(self._running_tasks.items()):
+            if task in all_done_tasks:
+                self._completed_tasks[seed_begin] = self._running_tasks.pop(seed_begin)
+
+        task = self._pool.submit(_constrained_depth_first_search, sub_graph, seed)
         self._running_tasks[seed.begin] = task
 
     def _run_new_exploration_tasks(self):
         while len(self._primed_seeds) > 0:
             exploration_seed = self._primed_seeds.pop()
-            self._submit_exploration_task(seed=exploration_seed)
+            vertex, begin, end, candidates = exploration_seed
+            candidates.add(vertex)
+
+            # Make Copy
+            sub_graph = ExplorationGraph(
+                self._transaction_graph
+                .time_slice(begin, end, closed=True)
+                .subgraph(candidates),
+                root_vertex=vertex
+            )
+
+            self._submit_exploration_task(sub_graph=sub_graph, seed=exploration_seed)
             # self._constrained_depth_first_search(exploration_seed)
+
+    def _found_cycles(self):
+        for completed_task in self._completed_tasks.values():
+            found_cycles = list(completed_task.result())
+            yield from found_cycles
+        self._completed_tasks.clear()
+
 
     def cleanup(self):
         # for all summaries S(x) do
@@ -251,7 +266,6 @@ class GraphCycleIterator:
             if self._seed_intervals[vertex].is_empty():
                 del self._seed_intervals[vertex]
 
-
         # If there are any primed seeds or running tasks, determine the minimum interval begin
         if len(self._primed_seeds) > 0 or len(self._running_tasks) > 0:
             seed_interval_begins = [seed.begin for seed in self._primed_seeds] + list(self._running_tasks.keys())
@@ -262,12 +276,12 @@ class GraphCycleIterator:
                 else seed_interval_begins[0]
             )
 
-            # Update the minimum graph begin timestamp if the new value is greater
+            # Update the minimum sub_graph begin timestamp if the new value is greater
             if current_seed_interval_minimum > self._minimum_graph_begin:
                 self._minimum_graph_begin = current_seed_interval_minimum
 
-                # If the updated minimum graph begin exceeds the transaction graph's begin timestamp,
-                # prune the graph to remove data older than the new minimum
+                # If the updated minimum sub_graph begin exceeds the transaction sub_graph's begin timestamp,
+                # prune the sub_graph to remove data older than the new minimum
                 if self._minimum_graph_begin > self._transaction_graph.begin():
                     self._transaction_graph.prune(lower_time_limit=self._minimum_graph_begin)
 
@@ -321,7 +335,7 @@ class GraphCycleIterator:
         self._log_stream.write(log_line)
 
     def __iter__(self):
-        if self._thread_pool is None:
+        if self._pool is None:
             self._initialize_thread_pool()
 
         for source, target, timestamp in self._interactions:
@@ -347,13 +361,14 @@ class GraphCycleIterator:
             if self._iteration_count % self.cleanup_interval == 0:
                 self.cleanup()
 
-            for completed_task in self._completed_tasks.values():
-                yield from completed_task.result()
-            self._completed_tasks.clear()
+            yield from self._found_cycles()
 
-            if (self._last_log_time - self.start_time) > self.logging_interval:
+            if self.logging and (self._last_log_time - self.start_time) > self.logging_interval:
                 self._log()
 
         wait(self._running_tasks.values())
-        self._thread_pool.shutdown()
-        self._log_stream.flush()
+        yield from self._found_cycles()
+        self._pool.shutdown()
+
+        if self.logging:
+            self._log_stream.flush()
