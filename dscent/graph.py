@@ -49,7 +49,7 @@ class TransactionGraph(nx.MultiDiGraph):
             self,
             begin: Timestamp | None = None,
             end: Timestamp | None = None,
-            nodes: Sequence[Vertex] | None = None,
+            nodes: Iterable[Vertex] | None = None,
             closed: bool = False
     ):
         """
@@ -59,8 +59,8 @@ class TransactionGraph(nx.MultiDiGraph):
         :param begin: The minimum timestamp for filtering edges. Edges with timestamps before this value are excluded.
         :param end: The maximum timestamp for filtering edges. Edges with timestamps after this value are excluded.
         :param nodes: A sequence of nodes to include in the subgraph. If None, all nodes are considered.
-        :param closed: If True, the interval is closed [begin, end], meaning edges with timestamps exactly equal to `end` are included.
-                       If False, the interval is half-open [begin, end), meaning edges with `end` timestamp are excluded.
+        :param closed: If True, the data_interval is closed [begin, end], meaning edges with timestamps exactly equal to `end` are included.
+                       If False, the data_interval is half-open [begin, end), meaning edges with `end` timestamp are excluded.
         :return: A subgraph view containing only edges within the specified time range and optionally filtered by nodes.
         """
         begin_filter = no_filter
@@ -106,13 +106,13 @@ class BundledCycle(nx.MultiDiGraph):
         edges = []
         assert len(sequential_reachability) > 0
         root, head = sequential_reachability[0], sequential_reachability[-1]
-        reverse_pairs = [root, head]
+        reverse_pairs = [(head, root)]
         reverse_pairs += list(sequential_reachability.reverse_pairs())
         for successor, predecessor in reverse_pairs:
             timestamps = successor.timestamps
             assert len(timestamps) > 0
             for timestamp in timestamps:
-                edges.append((predecessor, successor, timestamp))
+                edges.append((predecessor.vertex, successor.vertex, timestamp))
         return BundledCycle(edges)
 
 
@@ -168,8 +168,9 @@ class ExplorationGraph(TransactionGraph):
 
         return nx.subgraph_view(self, filter_edge=activation_filter)
 
-    def _simple_cycles(self, path: SequentialReachability, cycles: list[SequentialReachability]) -> tuple[
-        Timestamp, list[SequentialReachability]]:
+    def _simple_cycles(
+            self, path: SequentialReachability, cycles: list[SequentialReachability]
+    ) -> tuple[Timestamp, list[SequentialReachability]]:
         *_, head = path
         # v_cur ← v_k
         current_vertex = head.vertex
@@ -258,14 +259,13 @@ class ExplorationGraph(TransactionGraph):
             timestamps.trim_after(next_seed_begin)
             if len(timestamps) == 0:
                 continue
-
+            _, sequential_reachabilities = self._simple_cycles(
+                path=SequentialReachability([MultiTimedVertex(vertex=successor_vertex, timestamps=timestamps)]),
+                cycles=[]
+            )
             cycles = [
                 BundledCycle.from_sequential_reachability(sequential_reachability)
-                for _, sequential_reachability
-                in self._simple_cycles(
-                    path=SequentialReachability([MultiTimedVertex(vertex=successor_vertex, timestamps=timestamps)]),
-                    cycles=[]
-                )
+                for sequential_reachability in sequential_reachabilities
             ]
             all_cycles.extend(cycles)
         return all_cycles

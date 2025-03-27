@@ -34,9 +34,9 @@ def main():
     parser.add_argument("--end-date", type=str, default="2022-07-01", help="End date (YYYY-MM-DD)")
     parser.add_argument("--omega-values", type=int, nargs="+", default=[10, 25, 50, 100], help="Four omega values to use")
     parser.add_argument("--max-workers", type=int, default=2, help="Number of worker threads")
-    parser.add_argument("--cleanup-interval", type=int, default=10_000, help="Cleanup interval")
+    parser.add_argument("--cleanup-data_interval", type=int, default=10_000, help="Cleanup data_interval")
     parser.add_argument("--log-file-prefix", type=str, default="log", help="Prefix for log files")
-    parser.add_argument("--logging-interval", type=float, default=60, help="Interval on how frequently to measure logging values")
+    parser.add_argument("--logging-data_interval", type=float, default=60, help="Interval on how frequently to measure logging values")
 
     args = parser.parse_args()
     processes = []

@@ -11,6 +11,11 @@ Timestamp = int
 TimeDelta = int
 
 
+class Interval(NamedTuple):
+    begin: Timestamp
+    end: Timestamp
+
+
 class Interaction(NamedTuple):
     source: Vertex
     target: Vertex
@@ -52,7 +57,7 @@ class TimeSequence(list[Timestamp]):
         except StopIteration:
             raise ValueError("TimeSequence is empty, cannot retrieve the last element.")
 
-    def _get_trim_index(self, limit: Timestamp, strict: bool, left: bool) -> int:
+    def get_trim_index(self, limit: Timestamp, strict: bool, left: bool) -> int:
         """
         Returns the appropriate index for trimming operations using bisect.
 
@@ -61,6 +66,13 @@ class TimeSequence(list[Timestamp]):
         :param left: If True, trims from the left (before limit). Otherwise, trims from the right (after limit).
         :return: The index to slice the list.
         """
+        if len(self) == 0:
+            return 0
+        elif left and limit <= self[0]:
+            return 1 if strict else 0
+        elif not left and limit >= self[-1]:
+            return -1 if strict else len(self)
+
         if left:
             return bisect_right(self, limit) if strict else bisect_left(self, limit)
         else:
@@ -75,11 +87,11 @@ class TimeSequence(list[Timestamp]):
                        If False, removes elements before or equal to the upper_limit.
         :return: A new TimeSequence with the filtered timestamps.
         """
-        idx = self._get_trim_index(lower_limit, strict, left=True)
+        idx = self.get_trim_index(lower_limit, strict, left=True)
         del self[: idx]
 
     def get_trimmed_before(self, lower_limit: Timestamp, strict: bool = True) -> TimeSequence:
-        idx = self._get_trim_index(lower_limit, strict, left=True)
+        idx = self.get_trim_index(lower_limit, strict, left=True)
         return TimeSequence(self[idx:])
 
     def trim_after(self, upper_limit: Timestamp, strict: bool = True) -> None:
@@ -91,11 +103,11 @@ class TimeSequence(list[Timestamp]):
                        If False, removes elements after or equal to the upper_limit.
         :return: A new TimeSequence with the filtered timestamps.
         """
-        idx = self._get_trim_index(upper_limit, strict, left=False)
+        idx = self.get_trim_index(upper_limit, strict, left=False)
         del self[idx:]
 
     def get_trimmed_after(self, upper_limit: Timestamp, strict: bool = True) -> TimeSequence:
-        idx = self._get_trim_index(upper_limit, strict, left=False)
+        idx = self.get_trim_index(upper_limit, strict, left=False)
         return TimeSequence(self[: idx])
 
 
@@ -144,5 +156,3 @@ class MultiTimedVertex(TimedVertexABC):
 
     def __str__(self):
         return f"({self.vertex}, [{', '.join(map(str, self.timestamps))}])"
-
-

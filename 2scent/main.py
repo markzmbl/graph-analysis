@@ -12,7 +12,7 @@ def main():
     parser.add_argument("--omega", type=int, default=10, help="Omega value to use")
     parser.add_argument("--cycle-length", type=int, default=80, help="Maximum Cycle length to use")
     parser.add_argument("--max-workers", type=int, default=2, help="Number of worker threads")
-    parser.add_argument("--cleanup-interval", type=int, default=100_000, help="Cleanup interval")
+    parser.add_argument("--cleanup-data_interval", type=int, default=100_000, help="Cleanup data_interval")
     parser.add_argument("--file-prefix", type=str, default="2scent", help="Prefix for files")
     parser.add_argument("--temporary-directory", type=str, default=None, help="Prefix for log files")
 

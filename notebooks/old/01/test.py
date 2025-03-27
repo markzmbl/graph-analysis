@@ -41,7 +41,7 @@ def iteration_logging(generator, log_path: Path, log_interval=30):
 
     Args:
         generator (iterable): The generator that yields the items to iterate over.
-        log_interval (int): The current_timestamp interval in seconds to log progress.
+        log_interval (int): The current_timestamp data_interval in seconds to log progress.
     """
     # Initialize timing details
     start_time = time.time()  # Record the starting current_timestamp
@@ -53,7 +53,7 @@ def iteration_logging(generator, log_path: Path, log_interval=30):
             total_iterations += 1
             current_time = time.time()
 
-            # Check if the log interval has passed
+            # Check if the log data_interval has passed
             if current_time - last_log_time >= log_interval:
                 elapsed_time = current_time - start_time
                 rate = total_iterations / elapsed_time  # Iterations per second

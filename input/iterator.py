@@ -1,12 +1,13 @@
 import argparse
 import pickle
 from collections.abc import Iterator
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, Future
 from datetime import datetime, date
 from functools import cached_property
-from linecache import cache
 from pathlib import Path
 import networkx as nx
+
+from dscent.types_ import Interaction
 
 DATE_FORMAT = "%Y-%m-%d"
 
@@ -256,7 +257,7 @@ class GraphEdgeIterator:
 
     def _initialize_buffer(self):
         # Empty iterator for the currently active _transaction_graph; updated on demand
-        self.current_edges: Iterator[tuple[int, int, int]] = iter([])
+        self.current_edges: Iterator[Interaction] = iter([])
 
         # ThreadPoolExecutor with max_workers=1 to asynchronously load the next _transaction_graph(s)
         self.executor: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=1)
@@ -320,13 +321,15 @@ class GraphEdgeIterator:
         AttributeError
             If the resolved _transaction_graph object has no `.edges` attribute.
         """
-        if self.buffer[index] is None:
+        buffer = self.buffer[index]
+        if buffer is None:
             # No future to resolve; implies no more graphs
             self.current_edges = iter([])
             return
 
         # Wait for the future to complete and get the result
-        self.current_edges = self.buffer[index].result()
+        assert isinstance(buffer, Future)
+        self.current_edges = buffer.result()
 
     def __iter__(self) -> "GraphEdgeIterator":
         """
@@ -335,7 +338,7 @@ class GraphEdgeIterator:
         """
         return GraphEdgeIterator(start_date=self.start_date, end_date=self.end_date, buffer_count=self.buffer_count)
 
-    def __next__(self) -> tuple[int, int, int]:
+    def __next__(self) -> Interaction:
         """
         Yields the next edge in the current _transaction_graph. If the current _transaction_graph is
         exhausted, moves on to the next buffer slot and triggers a load
