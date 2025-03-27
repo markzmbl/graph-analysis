@@ -11,7 +11,7 @@ def generate_seeds(edges, omega, prune_interval=1_000):
     :return: All vertexs s, current_timestamp stamps t_start and t_end, and a candidates set such that there exists a loop from s to s
         using only vertexs in C starting at t_start and ending at t_end
     """
-    S = {}  # Summaries for each vertex
+    S = {}  # Summaries for each root
 
     for i, (a, b, t) in enumerate(edges):
         if a == b:

@@ -1,16 +1,22 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from copy import deepcopy
 from typing import DefaultDict
 
 import networkx as nx
-import numpy as np
 from networkx.classes.filters import show_nodes, no_filter
 
-from dscent.types_ import Timestamp, TimeDelta, ReachabilitySet, SingleTimedVertex, Vertex, TimeSequence, \
-    MultiTimedVertex, BundledPath
+from dscent.types_ import (
+    Timestamp,
+    TimeDelta,
+    SingleTimedVertex,
+    Vertex,
+    TimeSequence,
+    MultiTimedVertex,
+)
+from dscent.reachability import DirectReachability, SequentialReachability
 
 
 class TransactionGraph(nx.MultiDiGraph):
@@ -47,12 +53,15 @@ class TransactionGraph(nx.MultiDiGraph):
             closed: bool = False
     ):
         """
-        Returns a subgraph view that filters edges based on the temporal constraints.
-        Assumes edges have a timestamp as their origin.
+        Returns a subgraph view that filters edges based on temporal constraints.
+        Assumes edges have a timestamp as their key.
 
-        :param begin: Minimum timestamp (inclusive)
-        :param end: Maximum timestamp (inclusive)
-        :return: A subgraph view with filtered edges
+        :param begin: The minimum timestamp for filtering edges. Edges with timestamps before this value are excluded.
+        :param end: The maximum timestamp for filtering edges. Edges with timestamps after this value are excluded.
+        :param nodes: A sequence of nodes to include in the subgraph. If None, all nodes are considered.
+        :param closed: If True, the interval is closed [begin, end], meaning edges with timestamps exactly equal to `end` are included.
+                       If False, the interval is half-open [begin, end), meaning edges with `end` timestamp are excluded.
+        :return: A subgraph view containing only edges within the specified time range and optionally filtered by nodes.
         """
         begin_filter = no_filter
         if begin is not None:
@@ -75,14 +84,14 @@ class TransactionGraph(nx.MultiDiGraph):
         self.remove_edges_from(list(self.time_slice(end=lower_time_limit).edges(keys=True)))
 
 
-def _get_infinity():
-    return np.inf
-
-
 class _ClosureManager(DefaultDict[Vertex, Timestamp]):
-    def __init__(self):
-        super().__init__(_get_infinity)
-        self.dependencies: DefaultDict[Vertex, ReachabilitySet] = defaultdict(ReachabilitySet)
+    @staticmethod
+    def _infinity():
+        return float("inf")
+
+    def __init__(self, default_factory=None):  # Accept factory argument
+        super().__init__(self._infinity)  # Ensure valid factory
+        self.dependencies: DefaultDict[Vertex, DirectReachability] = defaultdict(DirectReachability)
 
     def add_dependency(self, origin: Vertex, dependency: SingleTimedVertex):
         # U(v) ← U(v) \ {(w, t′)}
@@ -91,23 +100,29 @@ class _ClosureManager(DefaultDict[Vertex, Timestamp]):
         self.dependencies[origin].append(dependency)
 
 
+class BundledCycle(nx.MultiDiGraph):
+    @staticmethod
+    def from_sequential_reachability(sequential_reachability: SequentialReachability):
+        edges = []
+        assert len(sequential_reachability) > 0
+        root, head = sequential_reachability[0], sequential_reachability[-1]
+        reverse_pairs = [root, head]
+        reverse_pairs += list(sequential_reachability.reverse_pairs())
+        for successor, predecessor in reverse_pairs:
+            timestamps = successor.timestamps
+            assert len(timestamps) > 0
+            for timestamp in timestamps:
+                edges.append((predecessor, successor, timestamp))
+        return BundledCycle(edges)
+
+
 class ExplorationGraph(TransactionGraph):
+    closure: _ClosureManager
+
     def __init__(self, *args, root_vertex: Vertex | None = None, **kwargs):
         super().__init__(*args, **kwargs)
         self.graph["root_vertex"] = root_vertex
         self.closure = _ClosureManager()
-
-    def __getstate__(self):
-        state = self.__dict__.copy()
-        # Convert closure to a serializable format
-        state["closure"] = dict(self.closure)
-        return state
-
-    def __setstate__(self, state):
-        self.__dict__.update(state)
-        # Restore closure as a _ClosureManager instance
-        self.closure = _ClosureManager()
-        self.closure.update(state["closure"])
 
     @property
     def root_vertex(self) -> Vertex:
@@ -122,7 +137,7 @@ class ExplorationGraph(TransactionGraph):
         for dependency in dependencies[idx:]:
             # T[w, v] = {t | (w, v, t) ∈ E}
             # T ← {t ∈ T[w, v] | t_v ≤ t}
-            timestamps = TimeSequence(self[dependency.vertex][origin])
+            timestamps = TimeSequence(self[dependency.root][origin])
             timestamps.trim_before(closing_time, strict=False)
 
             # if T ≠ ∅ then
@@ -130,14 +145,14 @@ class ExplorationGraph(TransactionGraph):
                 # U(v) ← U(v) ∪ {(w, min(T))}
                 self.closure.add_dependency(
                     origin=origin,
-                    dependency=SingleTimedVertex(vertex=dependency.vertex, timestamp=timestamps.begin())
+                    dependency=SingleTimedVertex(vertex=dependency.root, timestamp=timestamps.begin())
                 )
             # t_max ← max {t ∈ T[w, v] | t < t_v}
             timestamps.trim_after(closing_time)
-            if len(timestamps) > 0 and timestamps.end() > self.closure[dependency.vertex]:
-                self.closure[dependency.vertex] = timestamps.end()
+            if len(timestamps) > 0 and timestamps.end() > self.closure[dependency.root]:
+                self.closure[dependency.root] = timestamps.end()
                 # Unblock(w, t_max)
-                self.cascade_closure(origin=dependency.vertex, closing_time=timestamps.end())
+                self.cascade_closure(origin=dependency.root, closing_time=timestamps.end())
         # U(v) ← U(v) \ {(w, tw)}
         del dependencies[idx:]
 
@@ -153,7 +168,8 @@ class ExplorationGraph(TransactionGraph):
 
         return nx.subgraph_view(self, filter_edge=activation_filter)
 
-    def _simple_cycles(self, path: BundledPath, cycles: list[BundledPath]) -> tuple[Timestamp, list[BundledPath]]:
+    def _simple_cycles(self, path: SequentialReachability, cycles: list[SequentialReachability]) -> tuple[
+        Timestamp, list[SequentialReachability]]:
         *_, head = path
         # v_cur ← v_k
         current_vertex = head.vertex
@@ -185,7 +201,7 @@ class ExplorationGraph(TransactionGraph):
             #   lastp ← t
             closing_time = max(cycle_time_sequence.end(), closing_time)
             # Build new cycle
-            cycle = BundledPath(path)
+            cycle = SequentialReachability(path)
             # Expand(B, v_cur → Ts)
             try:
                 cycle.append(MultiTimedVertex(vertex=self.root_vertex, timestamps=cycle_time_sequence))
@@ -235,17 +251,21 @@ class ExplorationGraph(TransactionGraph):
 
         return closing_time, cycles
 
-    def simple_cycles(self, next_candidates_begin_timestamp: Timestamp) -> list[BundledPath]:
+    def simple_cycles(self, next_seed_begin: Timestamp) -> list[BundledCycle]:
         all_cycles = []
         for successor_vertex in self.successors(self.root_vertex):
             timestamps = TimeSequence(self[self.root_vertex][successor_vertex])
-            timestamps.trim_after(next_candidates_begin_timestamp)
+            timestamps.trim_after(next_seed_begin)
             if len(timestamps) == 0:
                 continue
 
-            _, cycles = self._simple_cycles(
-                path=BundledPath([MultiTimedVertex(vertex=successor_vertex, timestamps=timestamps)]),
-                cycles=[]
-            )
+            cycles = [
+                BundledCycle.from_sequential_reachability(sequential_reachability)
+                for _, sequential_reachability
+                in self._simple_cycles(
+                    path=SequentialReachability([MultiTimedVertex(vertex=successor_vertex, timestamps=timestamps)]),
+                    cycles=[]
+                )
+            ]
             all_cycles.extend(cycles)
         return all_cycles

@@ -9,7 +9,9 @@ import numpy as np
 from matplotlib import pyplot as plt
 
 from dscent.graph import TransactionGraph, ExplorationGraph
-from dscent.types_ import Seed, Vertex, Timestamp, ReachabilitySet, SingleTimedVertex, Candidates
+from dscent.types_ import Vertex, Timestamp, SingleTimedVertex
+from dscent.reachabilty import DirectReachability
+from dscent.iterator import _Candidates, _Seed
 
 edges = [
     ("a", "b", 1),
@@ -33,14 +35,14 @@ edges = [
 transaction_graph = TransactionGraph()
 for u, v, t in edges:
     transaction_graph.add_edge(u, v, key=t)
-candidates = Candidates(transaction_graph.nodes)
+candidates = _Candidates(transaction_graph.nodes)
 candidates.next_begin = 17
-seed = Seed("a", 1, 13, candidates)
+seed = _Seed("a", 1, 13, candidates)
 
 exploration_graph = ExplorationGraph(
     transaction_graph
     .time_slice(seed.begin, seed.end, nodes=seed.candidates, closed=True),
-    root_vertex=seed.vertex
+    root_vertex=seed.root
 )
 for c in exploration_graph.simple_cycles(seed.candidates.next_begin):
     print(str(c))

@@ -12,7 +12,6 @@ from contextlib import nullcontext
 from datetime import datetime, date
 
 import networkx as nx
-import numpy as np
 import psutil
 from pathlib import Path
 from typing import Generator, Iterable, Any, Hashable

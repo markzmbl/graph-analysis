@@ -1,8 +1,5 @@
-filelock
 intervaltree
-matplotlib
 networkx
-numpy
 tqdm
 pandas
 psutil

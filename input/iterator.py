@@ -268,6 +268,14 @@ class GraphEdgeIterator:
         # Immediately resolve buffer[0] to set up the first _transaction_graph's edges
         self._resolve_buffer(0)
 
+    def _load_iterator(self, graph_path: Path):
+        graph = read_graph(graph_path)
+        # Sort the edges by their timestamp (third element of the edge tuple)
+        return iter(sorted(
+            graph.edges(keys=True, data=True),
+            key=self._edge_sort_key
+        ))
+
     def _trigger_buffer(self, index: int):
         """
         Starts loading the next _transaction_graph file in the background and stores
@@ -285,11 +293,17 @@ class GraphEdgeIterator:
         """
         try:
             next_graph_path = next(self.graph_path_iterator)  # May raise StopIteration
-            future = self.executor.submit(read_graph, next_graph_path)
+            future = self.executor.submit(self._load_iterator, next_graph_path)
             self.buffer[index] = future
         except StopIteration:
             # No more graphs to load
             self.buffer[index] = None
+
+    @staticmethod
+    def _edge_sort_key(edge):
+        """Sorting key function for edges, prioritizing timestamp."""
+        u, v, key, data = edge
+        return key, u, v, data
 
     def _resolve_buffer(self, index: int):
         """
@@ -312,9 +326,7 @@ class GraphEdgeIterator:
             return
 
         # Wait for the future to complete and get the result
-        graph = self.buffer[index].result()
-        # Sort the edges by their timestamp (third element of the edge tuple)
-        self.current_edges = iter(sorted(graph.edges, key=lambda item: (item[2], item[0], item[1])))
+        self.current_edges = self.buffer[index].result()
 
     def __iter__(self) -> "GraphEdgeIterator":
         """
@@ -377,4 +389,3 @@ class GraphEdgeIterator:
 
     def __len__(self):
         return self.size
-
