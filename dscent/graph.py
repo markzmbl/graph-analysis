@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Sequence, Iterable
 from copy import deepcopy
 from typing import DefaultDict
 
@@ -13,8 +13,8 @@ from dscent.types_ import (
     TimeDelta,
     SingleTimedVertex,
     Vertex,
-    TimeSequence,
-    MultiTimedVertex,
+    FrozenTimeSequence,
+    MultiTimedVertex, TimeSequence,
 )
 from dscent.reachability import DirectReachability, SequentialReachability
 
@@ -117,12 +117,12 @@ class BundledCycle(nx.MultiDiGraph):
 
 
 class ExplorationGraph(TransactionGraph):
-    closure: _ClosureManager
+    _closure: _ClosureManager
 
     def __init__(self, *args, root_vertex: Vertex | None = None, **kwargs):
         super().__init__(*args, **kwargs)
         self.graph["root_vertex"] = root_vertex
-        self.closure = _ClosureManager()
+        self._closure = _ClosureManager()
 
     @property
     def root_vertex(self) -> Vertex:
@@ -130,7 +130,7 @@ class ExplorationGraph(TransactionGraph):
 
     def cascade_closure(self, origin: Vertex, closing_time: Timestamp):
         # for (w, t_w) ∈ U(v) do
-        dependencies = self.closure.dependencies[origin]
+        dependencies = self._closure.dependencies[origin]
         # if t_w < t_v then
         idx = dependencies.get_trim_index(closing_time, strict=True, left=False)
 
@@ -143,14 +143,14 @@ class ExplorationGraph(TransactionGraph):
             # if T ≠ ∅ then
             if len(timestamps) > 0:
                 # U(v) ← U(v) ∪ {(w, min(T))}
-                self.closure.add_dependency(
+                self._closure.add_dependency(
                     origin=origin,
                     dependency=SingleTimedVertex(vertex=dependency.root, timestamp=timestamps.begin())
                 )
             # t_max ← max {t ∈ T[w, v] | t < t_v}
             timestamps.trim_after(closing_time)
-            if len(timestamps) > 0 and timestamps.end() > self.closure[dependency.root]:
-                self.closure[dependency.root] = timestamps.end()
+            if len(timestamps) > 0 and timestamps.end() > self._closure[dependency.root]:
+                self._closure[dependency.root] = timestamps.end()
                 # Unblock(w, t_max)
                 self.cascade_closure(origin=dependency.root, closing_time=timestamps.end())
         # U(v) ← U(v) \ {(w, tw)}
@@ -160,7 +160,7 @@ class ExplorationGraph(TransactionGraph):
         begin_filter = self._begin_filter(begin=current_timestamp, strict=True)
 
         def activation_filter(u, v, key):
-            closing_time = self.closure[v]
+            closing_time = self._closure[v]
             return (
                     begin_filter(u, v, key)
                     and (key < closing_time if strict else key <= closing_time)
@@ -176,9 +176,9 @@ class ExplorationGraph(TransactionGraph):
         current_vertex = head.vertex
         # t_cur ← min(Tk)
         current_timestamp = head.begin()
-        # Set closure time explicitly
+        # Set _closure time explicitly
         # ct(v_cur) ← t_cur
-        self.closure[current_vertex] = current_timestamp
+        self._closure[current_vertex] = current_timestamp
         # lastp ← 0
         closing_time = 0
 
@@ -190,11 +190,11 @@ class ExplorationGraph(TransactionGraph):
         # Determine whether a cycle is present
         # if s ∈ N then
 
-        cycle_time_sequence = TimeSequence()
+        cycle_time_sequence = FrozenTimeSequence()
         if (
                 self.root_vertex in successor_view
                 # T ← {t | (v_cur, s, t) ∈ Out}
-                and (len(cycle_time_sequence := TimeSequence(successor_view[self.root_vertex])) > 0)
+                and (len(cycle_time_sequence := FrozenTimeSequence(successor_view[self.root_vertex])) > 0)
         ):
             # If necessary update current closing_time to the latest cycle closing time
             # t ← max(T)
@@ -219,7 +219,7 @@ class ExplorationGraph(TransactionGraph):
             # T_x ← {t | (v_cur, x, t) ∈ Out}
             successor_time_sequence = TimeSequence(successor_timestamps)
             # T_x′ ← {t ∈ Tx |t < ct(x)}
-            successor_time_sequence.trim_after(upper_limit=self.closure[successor_vertex])
+            successor_time_sequence.trim_after(upper_limit=self._closure[successor_vertex])
             # if T_x′ ≠ ∅ then
             if len(successor_time_sequence) == 0:
                 continue
@@ -227,7 +227,10 @@ class ExplorationGraph(TransactionGraph):
             # lastx ← AllBundles(s, Expand(B, v_cur -T_x'→ x)
             next_path = deepcopy(path)
             try:
-                next_path.append(MultiTimedVertex(vertex=successor_vertex, timestamps=successor_time_sequence))
+                next_path.append(MultiTimedVertex(
+                    vertex=successor_vertex,
+                    timestamps=FrozenTimeSequence(successor_time_sequence))
+                )
                 new_closing_time, cycles = self._simple_cycles(next_path, cycles)
                 # if last_x > lastp then
                 #   lastp ← last_x
@@ -238,7 +241,7 @@ class ExplorationGraph(TransactionGraph):
                 open_time_sequence.trim_before(new_closing_time)
                 if len(open_time_sequence) > 0:  # TODO: check
                     # Extend(U(x), (v_cur, t_m))
-                    self.closure.add_dependency(
+                    self._closure.add_dependency(
                         origin=successor_vertex,
                         dependency=SingleTimedVertex(vertex=current_vertex, timestamp=open_time_sequence.begin())
                     )
@@ -247,7 +250,7 @@ class ExplorationGraph(TransactionGraph):
 
         if closing_time > current_timestamp:
             # Unblock(v_cur, lastp)
-            self.closure[current_vertex] = closing_time
+            self._closure[current_vertex] = closing_time
             self.cascade_closure(origin=current_vertex, closing_time=closing_time)
 
         return closing_time, cycles
@@ -260,7 +263,10 @@ class ExplorationGraph(TransactionGraph):
             if len(timestamps) == 0:
                 continue
             _, sequential_reachabilities = self._simple_cycles(
-                path=SequentialReachability([MultiTimedVertex(vertex=successor_vertex, timestamps=timestamps)]),
+                path=SequentialReachability([MultiTimedVertex(
+                    vertex=successor_vertex,
+                    timestamps=FrozenTimeSequence(timestamps)
+                )]),
                 cycles=[]
             )
             cycles = [

@@ -1,7 +1,7 @@
 import pytest
 
 from dscent.reachability import DirectReachability, SequentialReachability
-from dscent.types_ import SingleTimedVertex, TimeSequence, MultiTimedVertex
+from dscent.types_ import SingleTimedVertex, FrozenTimeSequence, MultiTimedVertex
 
 
 def test_direct_reachability_initialization():
@@ -136,9 +136,9 @@ def test_union_operator():
 
 @pytest.fixture
 def sample_vertices():
-    timestamps1 = TimeSequence([1, 2, 3, 4])
-    timestamps2 = TimeSequence([3, 4, 5, 6])
-    timestamps3 = TimeSequence([6, 7, 8])
+    timestamps1 = FrozenTimeSequence([1, 2, 3, 4])
+    timestamps2 = FrozenTimeSequence([3, 4, 5, 6])
+    timestamps3 = FrozenTimeSequence([6, 7, 8])
 
     v1 = MultiTimedVertex("A", timestamps=timestamps1)
     v2 = MultiTimedVertex("B", timestamps=timestamps2)
@@ -168,14 +168,14 @@ def test_append_with_trimming(sample_vertices):
     seq.append(v1)
     seq.append(v2)
 
-    assert v2.timestamps == TimeSequence([3, 4, 5, 6])  # Should be trimmed based on logic
+    assert v2.timestamps == FrozenTimeSequence([3, 4, 5, 6])  # Should be trimmed based on logic
 
 
 def test_append_invalid_timestamps():
     seq = SequentialReachability()
 
-    timestamps1 = TimeSequence([5, 6, 7])
-    timestamps2 = TimeSequence([1, 2, 3])  # This is inconsistent as it starts before
+    timestamps1 = FrozenTimeSequence([5, 6, 7])
+    timestamps2 = FrozenTimeSequence([1, 2, 3])  # This is inconsistent as it starts before
 
     v1 = MultiTimedVertex("A", timestamps=timestamps1)
     v2 = MultiTimedVertex("B", timestamps=timestamps2)
@@ -188,8 +188,8 @@ def test_append_invalid_timestamps():
 def test_predecessor_trimming():
     seq = SequentialReachability()
 
-    timestamps1 = TimeSequence([1, 2, 3, 4, 5])
-    timestamps2 = TimeSequence([3, 4])  # Shorter sequence
+    timestamps1 = FrozenTimeSequence([1, 2, 3, 4, 5])
+    timestamps2 = FrozenTimeSequence([3, 4])  # Shorter sequence
 
     v1 = MultiTimedVertex("A", timestamps=timestamps1)
     v2 = MultiTimedVertex("V", timestamps=timestamps2)
@@ -200,9 +200,9 @@ def test_predecessor_trimming():
     assert (
             v1.timestamps
             != seq[0].timestamps  # Check if copy
-            == TimeSequence([1, 2, 3])  # Should be trimmed
+            == FrozenTimeSequence([1, 2, 3])  # Should be trimmed
     )
-    assert v2.timestamps == TimeSequence([3, 4])
+    assert v2.timestamps == FrozenTimeSequence([3, 4])
 
 
 def test_str_representation(sample_vertices):

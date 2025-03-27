@@ -208,7 +208,7 @@ class GraphEdgeIterator:
         An iterator over the edges of the currently-active _transaction_graph.
         Each edge is a 3-tuple `(u, v, timestamp)`.
     executor : ThreadPoolExecutor
-        A thread pool executor (with `max_workers=1` by default) used to
+        A thread pool executor (with `_max_workers=1` by default) used to
         load graphs asynchronously in the background.
 
     Raises
@@ -259,7 +259,7 @@ class GraphEdgeIterator:
         # Empty iterator for the currently active _transaction_graph; updated on demand
         self.current_edges: Iterator[Interaction] = iter([])
 
-        # ThreadPoolExecutor with max_workers=1 to asynchronously load the next _transaction_graph(s)
+        # ThreadPoolExecutor with _max_workers=1 to asynchronously load the next _transaction_graph(s)
         self.executor: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=1)
 
         # Preload the buffers up to the specified buffer_count

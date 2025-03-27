@@ -11,7 +11,7 @@ from matplotlib import pyplot as plt
 from dscent.graph import TransactionGraph, ExplorationGraph
 from dscent.types_ import Vertex, Timestamp, SingleTimedVertex
 from dscent.reachabilty import DirectReachability
-from dscent.iterator import _Candidates, _Seed
+from dscent.seed import _Candidates, Seed
 
 edges = [
     ("a", "b", 1),
@@ -37,7 +37,7 @@ for u, v, t in edges:
     transaction_graph.add_edge(u, v, key=t)
 candidates = _Candidates(transaction_graph.nodes)
 candidates.next_begin = 17
-seed = _Seed("a", 1, 13, candidates)
+seed = Seed("a", 1, 13, candidates)
 
 exploration_graph = ExplorationGraph(
     transaction_graph

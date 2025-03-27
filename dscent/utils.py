@@ -32,7 +32,7 @@ def iteration_logging(
         max_time: int = 60 * 60,
         log_stream: io.IOBase | None = None,
 ) -> Generator[Any, None, None]:
-    # Initialize logging variables
+    # Initialize _logging variables
     start_time = time.time()
     last_log_time = start_time
     total_iterations = 0

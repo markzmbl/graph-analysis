@@ -1,7 +1,7 @@
 import pytest
 from intervaltree import Interval
 
-from dscent.iterator import _Candidates, _Seed
+from dscent.seed import _Candidates, Seed
 
 
 def test_candidates_initialization():
@@ -19,12 +19,12 @@ def test_candidates_initialization():
 
 
 def test_seed_initialization():
-    """Test _Seed class initialization."""
+    """Test Seed class initialization."""
     candidates = _Candidates(["X", "Y"])
     candidates.next_begin = 15
     interval = Interval(5, 10, candidates)
 
-    seed = _Seed.construct("A", interval)
+    seed = Seed.construct("A", interval)
 
     assert seed.root == "A"
     assert seed.interval.begin == 5
@@ -34,11 +34,11 @@ def test_seed_initialization():
 
 
 def test_seed_immutability():
-    """Ensure that _Seed is immutable after creation."""
+    """Ensure that Seed is immutable after creation."""
     candidates = _Candidates(["X", "Y"])
     interval = Interval(10, 30, candidates)
     candidates.next_begin = 20
-    seed = _Seed.construct("A", interval)
+    seed = Seed.construct("A", interval)
 
     with pytest.raises(AttributeError):
         seed.root = "B"

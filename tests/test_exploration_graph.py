@@ -26,6 +26,6 @@ def test_exploration_graph_pickle(sample_graph):
     # Ensure root_vertex is preserved
     assert unpickled_graph.graph["root_vertex"] == sample_graph.graph["root_vertex"]
 
-    # Ensure closure is restored properly
-    assert isinstance(unpickled_graph.closure, _ClosureManager)
-    assert len(unpickled_graph.closure) == len(sample_graph.closure)
+    # Ensure _closure is restored properly
+    assert isinstance(unpickled_graph._closure, _ClosureManager)
+    assert len(unpickled_graph._closure) == len(sample_graph._closure)

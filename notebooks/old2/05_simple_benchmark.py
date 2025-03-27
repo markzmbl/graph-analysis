@@ -37,7 +37,7 @@ def main():
 
         # Use a _process pool for parallelization
         with ProcessPoolExecutor(max_workers=multiprocessing.cpu_count() // 4) as executor:
-            # Submit _transaction_graph tasks for parallel processing
+            # Submit _transaction_graph tasks for _parallel processing
             futures = [
                 executor.submit(process_graph, graph_path, length_bound, log_directory, cycles_directory)
                 for graph_path in graph_paths

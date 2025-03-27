@@ -4,7 +4,7 @@ from bisect import bisect_right, bisect_left
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Hashable, NamedTuple
+from typing import Hashable, NamedTuple, Sequence
 
 Vertex = Hashable
 Timestamp = int
@@ -20,22 +20,12 @@ class Interaction(NamedTuple):
     source: Vertex
     target: Vertex
     timestamp: Timestamp
-    data: dict | None = None
 
 
-class TimeSequence(list[Timestamp]):
-    """A sorted sequence of timestamps with efficient trimming methods."""
-
-    def __init__(self, timestamps: Iterable[Timestamp] | None = None):
-        """
-        Initializes a sorted sequence of timestamps.
-
-        :param timestamps: A list of datetime objects.
-        """
-        if timestamps is None:
-            timestamps = []
-        assert list(timestamps) == sorted(timestamps), "Timestamps must be in sorted order"
-        super().__init__(timestamps)  # Ensure the list is always sorted
+class TimeSequenceABC(Sequence[Timestamp], ABC):
+    def __init__(self, timestamps: Sequence[Timestamp] | None):
+        if timestamps is not None:
+            assert list(timestamps) == sorted(timestamps), "Timestamps must be in sorted order"
 
     def begin(self) -> Timestamp:
         """
@@ -45,7 +35,7 @@ class TimeSequence(list[Timestamp]):
         try:
             return next(iter(self))
         except StopIteration:
-            raise ValueError("TimeSequence is empty, cannot retrieve the first element.")
+            raise ValueError("FrozenTimeSequence is empty, cannot retrieve the first element.")
 
     def end(self) -> Timestamp:
         """
@@ -55,7 +45,7 @@ class TimeSequence(list[Timestamp]):
         try:
             return next(reversed(self))
         except StopIteration:
-            raise ValueError("TimeSequence is empty, cannot retrieve the last element.")
+            raise ValueError("FrozenTimeSequence is empty, cannot retrieve the last element.")
 
     def get_trim_index(self, limit: Timestamp, strict: bool, left: bool) -> int:
         """
@@ -78,21 +68,47 @@ class TimeSequence(list[Timestamp]):
         else:
             return bisect_left(self, limit) if strict else bisect_right(self, limit)
 
+
+class FrozenTimeSequence(tuple[Timestamp], TimeSequenceABC):
+    """A sorted sequence of timestamps with efficient trimming methods."""
+
+    def __init__(self, timestamps: Iterable[Timestamp] | None = None):
+        """
+        Initializes a sorted sequence of timestamps.
+
+        :param timestamps: A list of datetime objects.
+        """
+        super().__init__(tuple(timestamps or []))
+
+    def get_trimmed_before(self, lower_limit: Timestamp, strict: bool = True) -> FrozenTimeSequence:
+        idx = self.get_trim_index(lower_limit, strict, left=True)
+        return FrozenTimeSequence(self[idx:])
+
+    def get_trimmed_after(self, upper_limit: Timestamp, strict: bool = True) -> FrozenTimeSequence:
+        idx = self.get_trim_index(upper_limit, strict, left=False)
+        return FrozenTimeSequence(self[: idx])
+
+
+class TimeSequence(list[Timestamp], TimeSequenceABC):
+    def __init__(self, timestamps: Sequence[Timestamp] | None = None):
+        """
+        Initializes a sorted, mutable sequence of timestamps.
+
+        :param timestamps: A list of datetime objects.
+        """
+        super().__init__(list(timestamps or []))
+
     def trim_before(self, lower_limit: Timestamp, strict: bool = True) -> None:
         """
         Removes timestamps before the given upper_limit.
 
-        :param upper_limit: The threshold timestamp.
+        :param lower_limit: The threshold timestamp.
         :param strict: If True, removes elements strictly before the upper_limit.
                        If False, removes elements before or equal to the upper_limit.
-        :return: A new TimeSequence with the filtered timestamps.
+        :return: A new FrozenTimeSequence with the filtered timestamps.
         """
         idx = self.get_trim_index(lower_limit, strict, left=True)
         del self[: idx]
-
-    def get_trimmed_before(self, lower_limit: Timestamp, strict: bool = True) -> TimeSequence:
-        idx = self.get_trim_index(lower_limit, strict, left=True)
-        return TimeSequence(self[idx:])
 
     def trim_after(self, upper_limit: Timestamp, strict: bool = True) -> None:
         """
@@ -101,17 +117,13 @@ class TimeSequence(list[Timestamp]):
         :param upper_limit: The threshold timestamp.
         :param strict: If True, removes elements strictly after the upper_limit.
                        If False, removes elements after or equal to the upper_limit.
-        :return: A new TimeSequence with the filtered timestamps.
+        :return: A new FrozenTimeSequence with the filtered timestamps.
         """
         idx = self.get_trim_index(upper_limit, strict, left=False)
         del self[idx:]
 
-    def get_trimmed_after(self, upper_limit: Timestamp, strict: bool = True) -> TimeSequence:
-        idx = self.get_trim_index(upper_limit, strict, left=False)
-        return TimeSequence(self[: idx])
 
-
-@dataclass
+@dataclass(frozen=True)
 class TimedVertexABC(ABC):
     vertex: Vertex
 
@@ -129,7 +141,7 @@ class TimedVertexABC(ABC):
         return (self.begin(), self.vertex) < (other.begin(), other.vertex)
 
 
-@dataclass
+@dataclass(frozen=True)
 class SingleTimedVertex(TimedVertexABC):
     timestamp: Timestamp
 
@@ -143,10 +155,9 @@ class SingleTimedVertex(TimedVertexABC):
         return f"({self.vertex}, {repr(self.timestamp)})"
 
 
-@dataclass
+@dataclass(frozen=True)
 class MultiTimedVertex(TimedVertexABC):
-    timestamps: TimeSequence
-    data: list[dict] | None = None
+    timestamps: FrozenTimeSequence
 
     def begin(self) -> Timestamp:
         return self.timestamps.begin()
