@@ -91,13 +91,13 @@ class SeedGenerator:
         cyclic_reachability = DirectReachability(
             [v for v in target_reverse_reachability if v.vertex == target]
         )
+        # TODO: cyclic_reachability.trim_before(lower_limit=current_timestamp, strict=True)
         if len(cyclic_reachability) == 0:
             return
 
         # {c ∈ S(a), tc > tb}
         for cyclic_reachable in cyclic_reachability:
             candidate_reachability = DirectReachability(source_reverse_reachability)
-            candidate_reachability.trim_before(lower_limit=cyclic_reachable.timestamp)
 
             if len(candidate_reachability) == 0:
                 continue

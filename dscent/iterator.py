@@ -4,7 +4,7 @@ import csv
 import io
 import time
 from collections.abc import Iterator, Generator
-from concurrent.futures import Future, wait, FIRST_COMPLETED
+from concurrent.futures import Future, wait, ALL_COMPLETED, FIRST_COMPLETED
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from itertools import repeat
 from time import monotonic
@@ -12,6 +12,7 @@ from typing import TextIO
 
 import psutil
 from humanfriendly import parse_size
+from tqdm import tqdm
 
 from dscent.graph import TransactionGraph, ExplorationGraph, BundledCycle
 from dscent.seed import Seed, SeedGenerator
@@ -29,20 +30,28 @@ class GraphCycleIterator:
             omega: TimeDelta = 10,
             max_workers: int = 4,
             threaded: bool = False,
-            garbage_collection_max: int | str = "16G",
+            garbage_collection_max: int | str = "32G",
             log_stream: io.StringIO | TextIO | None = None,
             logging_interval: int = 60,
             yield_seeds: bool = False,
+            progress_bar: bool = False,
     ) -> None:
         """
         Initializes the GraphCycleIterator with streaming edges, a maximum timestamp
         window, and a prune data_interval.
         """
-        self._interactions = iter(interactions)  # Stream of edges
+        self._use_tqdm = progress_bar
+        interactions = iter(interactions)
+        if self._use_tqdm:
+            interactions = tqdm(interactions, unit_scale=True, smoothing=1, position=0)
+        self._interactions = interactions
         self._iteration_count: int = 0  # Track number of processed edges
 
         self._process = psutil.Process()
-        self._max_bytes: int = parse_size(garbage_collection_max)  # max bytes for pruning old data
+        # self._cleanup_interval = cleanup_interval
+        # self._last_cleaned = 0
+        self._max_bytes = parse_size(garbage_collection_max)  # max bytes for pruning old data
+        # self._cleanup_cooldown = cleanup_cooldown
 
         self._max_workers = max_workers  # Maximum number of active workers
         self._parallel = self._max_workers > 0
@@ -84,10 +93,9 @@ class GraphCycleIterator:
                 self._completed_tasks[seed] = done_task
 
     def _await_task(self, all_tasks: bool = False) -> None:
-        if not all_tasks:
-            wait(self._running_tasks.values(), return_when=FIRST_COMPLETED)
-        else:
-            wait(self._running_tasks.values())
+        return_when = ALL_COMPLETED if all_tasks else FIRST_COMPLETED
+        wait(self._running_tasks.values(), return_when=return_when)
+        self._update_completed_tasks()
 
     def _submit_exploration_task(self, sub_graph: ExplorationGraph, seed: Seed):
         if self._parallel:
@@ -209,8 +217,10 @@ class GraphCycleIterator:
             self._run_new_exploration_tasks()
             yield from self._found_cycles()
 
-            if self._get_memory_usage() > self._max_bytes == 0:
+            if self._get_memory_usage() > self._max_bytes:
                 self.cleanup()
+                if self._get_memory_usage() > self._max_bytes:
+                    raise ResourceWarning("Memory limit exceeded after cleanup.")
 
             if self._logging:
                 now = monotonic()
