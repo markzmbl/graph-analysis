@@ -63,6 +63,7 @@ class GraphCycleIterator:
         self._completed_tasks: dict[Seed, Future] = {}
         self._explored_seeds: set[Seed] = set()
 
+        self._omega = omega
         self._seed_generator = SeedGenerator(omega=omega)
         self._yield_seeds = yield_seeds
 
@@ -99,20 +100,25 @@ class GraphCycleIterator:
         self._update_completed_tasks()
 
     def _submit_exploration_task(self, sub_graph: ExplorationGraph, seed: Seed):
+        next_seed_begin = (
+            seed.next_begin
+            if seed.next_begin is not None
+            else seed.interval.begin + self._omega
+        )
         if self._parallel:
             # Wait if necessary
             while len(self._running_tasks) >= self._max_workers:
                 self._await_task()
-            task = self._task_pool.submit(sub_graph.simple_cycles, seed.next_begin)
+            task = self._task_pool.submit(sub_graph.simple_cycles, next_seed_begin)
         else:
             # Mock Future
             task = Future()
-            task.set_result(sub_graph.simple_cycles(seed.next_begin))
+            task.set_result(sub_graph.simple_cycles(next_seed_begin))
         self._running_tasks[seed] = task
 
     def _run_new_exploration_tasks(self, complete: bool = False):
-        while self._seed_generator.has_seeds():
-            seed = self._seed_generator.pop_seed()
+
+        for seed in self._seed_generator.get_primed_seeds():
             root_vertex = seed.root
             # Subgraph View
             graph_view = self._transaction_graph.time_slice(
@@ -155,7 +161,7 @@ class GraphCycleIterator:
         thresholds += [
             seed.interval.begin
             for seed in
-            list(self._running_tasks) + self._seed_generator.seeds
+            list(self._running_tasks) + self._seed_generator.get_primed_seeds()
         ]
         if len(thresholds) == 0:
             return
