@@ -18,16 +18,16 @@ def test_transaction_graph_time_slice():
 
     # **Closed Interval [1, 5]**
     subgraph_closed = g.time_slice(begin=1, end=5, closed=True)
-    assert len(subgraph_closed.edges) == 2, "time_slice(begin=1, end=5, closed=True) should include t1 and t2"
+    assert len(subgraph_closed.edges) == 2, "time_slice(begin=1, upper_limit=5, closed=True) should include t1 and t2"
 
     # **Half-Open Interval [1, 5)**
     subgraph_open = g.time_slice(begin=1, end=5, closed=False)
-    assert len(subgraph_open.edges) == 1, "time_slice(begin=1, end=5, closed=False) should include only t1 (exclude t2)"
+    assert len(subgraph_open.edges) == 1, "time_slice(begin=1, upper_limit=5, closed=False) should include only t1 (exclude t2)"
 
     # **Test full range, closed**
     subgraph_full_closed = g.time_slice(begin=1, end=10, closed=True)
-    assert len(subgraph_full_closed.edges) == 3, "time_slice(begin=1, end=10, closed=True) should include all edges"
+    assert len(subgraph_full_closed.edges) == 3, "time_slice(begin=1, upper_limit=10, closed=True) should include all edges"
 
-    # **Test full range, open at end**
+    # **Test full range, open at upper_limit**
     subgraph_full_open_end = g.time_slice(begin=1, end=10, closed=False)
-    assert len(subgraph_full_open_end.edges) == 2, "time_slice(begin=1, end=10, closed=False) should exclude t3"
+    assert len(subgraph_full_open_end.edges) == 2, "time_slice(begin=1, upper_limit=10, closed=False) should exclude t3"

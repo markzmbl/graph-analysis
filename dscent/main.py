@@ -31,7 +31,7 @@ meebits = "7bd29408f11d2bfc23c34f18275bbf23bb716bc7"
 def main():
     parser = argparse.ArgumentParser(description="Process sub_graph interactions and cycles.")
     parser.add_argument("--start-date", type=str, default="2021-10-01", help="Start date (YYYY-MM-DD)")
-    parser.add_argument("--end-date", type=str, default="2022-07-01", help="End date (YYYY-MM-DD)")
+    parser.add_argument("--upper_limit-date", type=str, default="2022-07-01", help="End date (YYYY-MM-DD)")
     parser.add_argument("--_omega-values", type=int, nargs="+", default=[10, 25, 50, 100], help="Four _omega values to use")
     parser.add_argument("--max-workers", type=int, default=2, help="Number of worker threads")
     parser.add_argument("--cleanup-data_interval", type=int, default=10_000, help="Cleanup data_interval")

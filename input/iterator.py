@@ -113,7 +113,7 @@ def get_graph_paths(
 ) -> list[Path]:
     """
     Retrieve a sorted list of `.pickle` _transaction_graph file paths from a fixed directory,
-    optionally filtered by a start and end date. Filenames are expected to contain
+    optionally filtered by a start and upper_limit date. Filenames are expected to contain
     a date in the format YYYY-MM-DD (parsed via `parse_filename`).
 
     Parameters
@@ -178,7 +178,7 @@ def get_graph_paths(
 class GraphEdgeIterator:
     """
     An iterator that asynchronously reads multiple _transaction_graph files (each file
-    containing edges), sorts the edges of each file by their _lower_time_limit,
+    containing edges), sorts the edges of each file by their _lower_limit,
     and yields them in chronological order.
 
     Parameters
@@ -219,7 +219,7 @@ class GraphEdgeIterator:
     Notes
     -----
     - Each file is loaded asynchronously by `read_graph` in a separate thread.
-    - The edges of the currently loaded _transaction_graph are sorted by their _lower_time_limit,
+    - The edges of the currently loaded _transaction_graph are sorted by their _lower_limit,
       so we can yield them in ascending timestamp order.
     - Once a file's edges are exhausted, this iterator moves on to the next
       buffer slot (the next _transaction_graph) and triggers a load of the subsequent file
@@ -390,5 +390,5 @@ class GraphEdgeIterator:
     def size(self):
         return sum(1 for _ in self)
 
-    def __len__(self):
-        return self.size
+    # def __len__(self):
+    #     return self.size

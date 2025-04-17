@@ -59,8 +59,8 @@ class TransactionGraph(nx.MultiDiGraph):
         :param begin: The minimum timestamp for filtering edges. Edges with timestamps before this value are excluded.
         :param end: The maximum timestamp for filtering edges. Edges with timestamps after this value are excluded.
         :param nodes: A sequence of nodes to include in the subgraph. If None, all nodes are considered.
-        :param closed: If True, the data_interval is closed [begin, end], meaning edges with timestamps exactly equal to `end` are included.
-                       If False, the data_interval is half-open [begin, end), meaning edges with `end` timestamp are excluded.
+        :param closed: If True, the data_interval is closed [begin, upper_limit], meaning edges with timestamps exactly equal to `upper_limit` are included.
+                       If False, the data_interval is half-open [begin, upper_limit), meaning edges with `upper_limit` timestamp are excluded.
         :return: A subgraph view containing only edges within the specified time range and optionally filtered by nodes.
         """
         begin_filter = no_filter
@@ -270,7 +270,7 @@ class ExplorationGraph(TransactionGraph):
                 cycles=[]
             )
             cycles = [
-                BundledCycle.from_sequential_reachability(sequential_reachability)
+                BundledCycle.from_sequential_reachability(sequential_reachability)  # TODO: add data
                 for sequential_reachability in sequential_reachabilities
             ]
             all_cycles.extend(cycles)

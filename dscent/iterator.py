@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import time
+import warnings
 from collections.abc import Iterator, Generator
 from concurrent.futures import Future, wait, ALL_COMPLETED, FIRST_COMPLETED
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
@@ -31,6 +32,7 @@ class GraphCycleIterator:
             max_workers: int = 4,
             threaded: bool = False,
             garbage_collection_max: int | str = "32G",
+            garbage_collection_cooldown: int = 10_000_000,
             log_stream: io.StringIO | TextIO | None = None,
             logging_interval: int = 60,
             yield_seeds: bool = False,
@@ -48,10 +50,9 @@ class GraphCycleIterator:
         self._iteration_count: int = 0  # Track number of processed edges
 
         self._process = psutil.Process()
-        # self._cleanup_interval = cleanup_interval
-        # self._last_cleaned = 0
         self._max_bytes = parse_size(garbage_collection_max)  # max bytes for pruning old data
-        # self._cleanup_cooldown = cleanup_cooldown
+        self._last_cleaned = float("-inf")
+        self._cleanup_cooldown = garbage_collection_cooldown
 
         self._max_workers = max_workers  # Maximum number of active workers
         self._parallel = self._max_workers > 0
@@ -165,9 +166,23 @@ class GraphCycleIterator:
             # prune the sub_graph to remove data older than the new minimum
             self._transaction_graph.prune(lower_time_limit=minimum_graph_begin)
 
+    def _memory_limit_exceeded(self) -> bool:
+        """
+        Check if the memory limit is exceeded.
+        """
+        return self._get_memory_usage() > self._max_bytes
+
+    def _cleanup_cooled_down(self) -> bool:
+        """
+        Check if the cleanup cooldown period has passed.
+        """
+        return self._iteration_count > self._last_cleaned + self._cleanup_cooldown
+
     def cleanup(self):
-        self._seed_generator.cleanup()
-        self._prune_transaction_graph()
+        if self._memory_limit_exceeded() and self._cleanup_cooled_down():
+            self._seed_generator.cleanup()
+            self._prune_transaction_graph()
+            self._last_cleaned = self._iteration_count
 
     def _get_log_line(
             self,
@@ -216,11 +231,6 @@ class GraphCycleIterator:
 
             self._run_new_exploration_tasks()
             yield from self._found_cycles()
-
-            if self._get_memory_usage() > self._max_bytes:
-                self.cleanup()
-                if self._get_memory_usage() > self._max_bytes:
-                    raise ResourceWarning("Memory limit exceeded after cleanup.")
 
             if self._logging:
                 now = monotonic()
