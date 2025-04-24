@@ -268,13 +268,15 @@ class ExplorationGraph(TransactionGraph):
         edges = []
         assert len(sequential_reachability) > 0
         root, head = sequential_reachability[0], sequential_reachability[-1]
-        reverse_pairs = [(head, root)]
-        reverse_pairs += list(sequential_reachability.reverse_pairs())
-        for successor, predecessor in reverse_pairs:
+        cycle_edge_pairs = [(head, root)]
+        cycle_edge_pairs += list(sequential_reachability.reverse_pairs())
+        for predecessor, successor in cycle_edge_pairs:
             timestamps = successor.timestamps
             assert len(timestamps) > 0
             for timestamp in timestamps:
                 u, v = predecessor.vertex, successor.vertex
-                data = self[u][v][timestamp]
+
+                assert self.has_edge(u, v, timestamp), f"{u}, {v}, {timestamp} - {sequential_reachability} - {self.edges(keys=True)}"
+                data = self.get_edge_data(u, v, timestamp, default={})
                 edges.append((u, v, timestamp, data))
         return BundledCycle(edges)
