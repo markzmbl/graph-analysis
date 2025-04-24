@@ -1,12 +1,12 @@
 import pytest
 from intervaltree import Interval
 
-from dscent.seed import _Candidates, Seed
+from dscent.seed import Candidates, Seed
 
 
 def test_candidates_initialization():
-    """Test _Candidates set initialization and next_begin attribute."""
-    candidates = _Candidates(["A", "B", "C"])
+    """Test Candidates set initialization and next_begin attribute."""
+    candidates = Candidates(["A", "B", "C"])
     assert isinstance(candidates, set)
     assert candidates == {"A", "B", "C"}
 
@@ -20,7 +20,7 @@ def test_candidates_initialization():
 
 def test_seed_initialization():
     """Test Seed class initialization."""
-    candidates = _Candidates(["X", "Y"])
+    candidates = Candidates(["X", "Y"])
     candidates.next_begin = 15
     interval = Interval(5, 10, candidates)
 
@@ -35,7 +35,7 @@ def test_seed_initialization():
 
 def test_seed_immutability():
     """Ensure that Seed is immutable after creation."""
-    candidates = _Candidates(["X", "Y"])
+    candidates = Candidates(["X", "Y"])
     interval = Interval(10, 30, candidates)
     candidates.next_begin = 20
     seed = Seed.construct("A", interval)

@@ -101,19 +101,7 @@ class _ClosureManager(DefaultDict[Vertex, Timestamp]):
 
 
 class BundledCycle(nx.MultiDiGraph):
-    @staticmethod
-    def from_sequential_reachability(sequential_reachability: SequentialReachability):
-        edges = []
-        assert len(sequential_reachability) > 0
-        root, head = sequential_reachability[0], sequential_reachability[-1]
-        reverse_pairs = [(head, root)]
-        reverse_pairs += list(sequential_reachability.reverse_pairs())
-        for successor, predecessor in reverse_pairs:
-            timestamps = successor.timestamps
-            assert len(timestamps) > 0
-            for timestamp in timestamps:
-                edges.append((predecessor.vertex, successor.vertex, timestamp))
-        return BundledCycle(edges)
+    pass
 
 
 class ExplorationGraph(TransactionGraph):
@@ -270,8 +258,23 @@ class ExplorationGraph(TransactionGraph):
                 cycles=[]
             )
             cycles = [
-                BundledCycle.from_sequential_reachability(sequential_reachability)  # TODO: add data
+                self.to_bundled_cycle(sequential_reachability)
                 for sequential_reachability in sequential_reachabilities
             ]
             all_cycles.extend(cycles)
         return all_cycles
+
+    def to_bundled_cycle(self, sequential_reachability: SequentialReachability):
+        edges = []
+        assert len(sequential_reachability) > 0
+        root, head = sequential_reachability[0], sequential_reachability[-1]
+        reverse_pairs = [(head, root)]
+        reverse_pairs += list(sequential_reachability.reverse_pairs())
+        for successor, predecessor in reverse_pairs:
+            timestamps = successor.timestamps
+            assert len(timestamps) > 0
+            for timestamp in timestamps:
+                u, v = predecessor.vertex, successor.vertex
+                data = self[u][v][timestamp]
+                edges.append((u, v, timestamp, data))
+        return BundledCycle(edges)

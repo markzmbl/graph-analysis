@@ -61,7 +61,7 @@ class TimeSequenceABC(Sequence[Timestamp], ABC):
         elif left and limit <= self[0]:
             return 1 if strict else 0
         elif not left and limit >= self[-1]:
-            return -1 if strict else len(self)
+            return len(self) if strict else len(self) - 1
 
         if left:
             return bisect_right(self, limit) if strict else bisect_left(self, limit)
