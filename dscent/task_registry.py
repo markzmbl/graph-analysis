@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import queue
-from concurrent.futures import Future, ThreadPoolExecutor, ALL_COMPLETED, FIRST_COMPLETED, wait
+from concurrent.futures import Future, ThreadPoolExecutor
 from enum import auto, Enum
 from typing import TypeVar, Hashable, Generic
 
@@ -69,24 +69,10 @@ class TaskRegistry(Generic[K]):
                 if done_task is not None:
                     self._completed[key] = done_task
 
-    def wait(self, await_all: bool = False):
-        return_when = ALL_COMPLETED if await_all else FIRST_COMPLETED
-        done, not_done = set(), self._running.values()
-        # Either wait until one task is completed or if specified all no task is uncompleted
-        while len(done) < self._queue_size / 2 or await_all and len(not_done) == 0:
-            done, not_done = wait(
-                set(self._running.values()),
-                return_when=return_when,
-                timeout=self._wait_timeout  # 60 Seconds timeout
-            )
-        self.update_running_tasks()
-
     def submit(self, task_type: TaskType, task_key: K, fn, *args, persist: bool = False, **kwargs) -> None:
         key = (task_type, task_key)
 
         if self._pool is not None:
-            # while len(self._running) >= self._queue_size:
-            #     self.wait()
             if persist:
                 self._running[key] = self._pool.submit(fn, *args, **kwargs)
             else:

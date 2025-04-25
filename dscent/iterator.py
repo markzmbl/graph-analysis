@@ -31,7 +31,7 @@ class GraphCycleIterator:
             interactions: Iterator[Interaction],
             omega: TimeDelta = 10,
             max_workers: int = 2,
-            queue_size: int = 100,
+            queue_size: int = 10_000,
             garbage_collection_max: int | str = "32G",
             garbage_collection_cooldown: int = 10_000_000,
             log_stream: io.StringIO | TextIO | None = None,
