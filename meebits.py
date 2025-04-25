@@ -18,9 +18,11 @@ import pickle
 
 _DEFAULT_START_DATE = "2021-10-01"
 _DEFAULT_END_DATE = "2022-07-01"
+_BUFFERED_FILES_COUNT = 10
 # _DEFAULT_END_DATE = "2021-10-07"
 _DEFAULT_OMEGA = 25
-_DEFAULT_WORKERS = 2
+_DEFAULT_WORKERS = 32
+_DEFAULT_QUEUE_SIZE = 10_000
 # _DEFAULT_WORKERS = 0
 _DEFAULT_GC_MAX = "48GB"
 # _DEFAULT_GC_MAX = "100MB"
@@ -54,10 +56,12 @@ def serialize_graph_data(graph):
 
 
 def main(
+        buffered_files_count: int = _BUFFERED_FILES_COUNT,
         start_date: str | date = _DEFAULT_START_DATE,
         end_date: str | date = _DEFAULT_END_DATE,
         omega: int = _DEFAULT_OMEGA,
         workers: int = _DEFAULT_WORKERS,
+        queue_size: int = _DEFAULT_QUEUE_SIZE,
         gc_max: str | int = _DEFAULT_GC_MAX,
         gc_cooldown: int = _DEFAULT_GC_COOLDOWN,
         log_prefix: str = _DEFAULT_LOG_PREFIX,
@@ -75,11 +79,13 @@ def main(
         cycles_log_path.open("w") as cycles_log_stream,
     ):
         cycles_csv_writer = csv.writer(cycles_log_stream, delimiter=';')
-        interactions = GraphEdgeIterator(start_date=start_date, end_date=end_date)
+        interactions = GraphEdgeIterator(start_date=start_date, end_date=end_date, buffer_count=buffered_files_count)
         cycles_csv_writer.writerow(["seed_begin", "seed_end", "next_seed_begin", "candidates", "bundled_cycle"])
         for seed, bundled_cycle_graph in GraphCycleIterator(
                 interactions,
-                omega=omega, max_workers=workers,
+                omega=omega,
+                max_workers=workers,
+                queue_size=queue_size,
                 logging_interval=1,
                 garbage_collection_max=gc_max,
                 garbage_collection_cooldown=gc_cooldown,
@@ -104,8 +110,10 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Process graph interactions and detect cycles.")
     parser.add_argument("--start_date", default=_DEFAULT_START_DATE, type=str, help="Start date in YYYY-MM-DD format")
     parser.add_argument("--end_date", default=_DEFAULT_END_DATE, type=str, help="End date in YYYY-MM-DD format")
+    parser.add_argument("--buffer", default=_BUFFERED_FILES_COUNT, type=int, help="Define how many pickle files to keep loaded")
     parser.add_argument("--omega", default=_DEFAULT_OMEGA, type=int, help="Omega value for cycle detection")
     parser.add_argument("--workers", default=_DEFAULT_WORKERS, type=int, help="Number of worker threads")
+    parser.add_argument("--task_queue", default=_DEFAULT_QUEUE_SIZE, type=int, help="Size of task queue")
     parser.add_argument("--gc_max", default=_DEFAULT_GC_MAX, type=str, help="Garbage Collection maximum memory")
     parser.add_argument("--gc_cooldown", default=_DEFAULT_GC_COOLDOWN, type=int, help="Garbage Collection cooldown")
     parser.add_argument("--log_prefix", default=_DEFAULT_LOG_PREFIX, type=str, help="Log file prefix")
@@ -113,11 +121,15 @@ if __name__ == '__main__':
     parser.add_argument("--progress", default=_DEFAULT_PROGRESS_BAR, type=bool, help="Show Progress Bar")
     args = parser.parse_args()
     main(
+        buffered_files_count=args.buffer,
         start_date=args.start_date,
         end_date=args.end_date,
         omega=args.omega,
         workers=args.workers,
+        queue_size=args.task_queue,
         gc_max=args.gc_max,
+        gc_cooldown=args.gc_cooldown,
+        log_directory=args.log_dir,
         log_prefix=args.log_prefix,
         progress_bar=args.progress,
     )

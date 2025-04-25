@@ -30,7 +30,8 @@ class GraphCycleIterator:
             self,
             interactions: Iterator[Interaction],
             omega: TimeDelta = 10,
-            max_workers: int = 6,
+            max_workers: int = 2,
+            queue_size: int = 100,
             garbage_collection_max: int | str = "32G",
             garbage_collection_cooldown: int = 10_000_000,
             log_stream: io.StringIO | TextIO | None = None,
@@ -52,7 +53,7 @@ class GraphCycleIterator:
         self._current_time = 0
         # Parallel setup
         self._max_workers = max_workers  # Maximum number of active workers
-        self._task_registry = TaskRegistry(max_workers=max_workers)
+        self._task_registry = TaskRegistry(max_workers=max_workers, queue_size=queue_size)
         self._explored_seeds: set[Seed] = set()
         # Time Threshold
         self._omega = omega
@@ -131,7 +132,6 @@ class GraphCycleIterator:
                 return
             # if S(a) exists then
             with self._enter_reachability(source):
-                source_reverse_reachability = self._reverse_reachability[source]
                 # Prune old entries for relevant edges
                 # S(a) ← S(a)\{(x,tx) ∈ S(a) | tx ≤ t−ω}
                 source_reverse_reachability = self._get_trimmed_reachability(source, lower_limit)

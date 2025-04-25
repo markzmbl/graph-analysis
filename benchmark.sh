@@ -1,59 +1,59 @@
 #!/bin/bash
 
-set -e
+# Ensure the script exits on first error
+#set -e
 
-# Set environment variables
-export PYPY_GC_MAX=16GB
+# Activate the conda environment
+source ~/.bashrc
+conda activate py313
 
-# Define paths to virtual environments
-VENV_THREAD=".venv313t/bin/python"
-VENV_PROCESS=".venv313/bin/python"
-VENV_PYPY=".venv311p/bin/python"
+# Benchmark configuration
+OMEGA_VALUES=(25 50 100 10 30 40 60 70 80 20 150 200 300 250 400 500 350 450)
+BUFFER=10
+START_DATE="2021-10-01"
+END_DATE="2022-07-01"
+WORKERS=16
+TASK_QUEUE=1000000
+GC_MAX="128GB"
+GC_COOLDOWN=1000000
+LOG_PREFIX="april-run"
+LOG_DIR="/export/share/markusz33dm/logs/"
+PROGRESS=true
 
-SCRIPT="meebits.py"
-#WORKERS_LIST=(1 2 4 8)
-WORKERS_LIST=(2 4 8)
+# Output file for benchmark results
+RESULTS_FILE="$LOG_DIR/benchmark_results.csv"
+echo "omega,execution_time_sec" > "$RESULTS_FILE"
 
-# Benchmark runner functions
-run_benchmark_pypy() {
-    local workers=$1
-    export PYTHON_GIL=1
-    echo "Running $SCRIPT with PyPy and $workers workers..."
-    { time "$VENV_PYPY" -O "$SCRIPT" --workers "$workers" --_threaded 0; } 2>&1 | tee -a benchmark_results.txt
-    echo "-------------------------"
-}
+# Create log directory if it doesn't exist
+mkdir -p "$LOG_DIR"
 
-run_benchmark_cpython() {
-    local workers=$1
-    export PYTHON_GIL=1
-    echo "Running $SCRIPT with CPython and $workers workers..."
-    { time "$VENV_PROCESS" -O "$SCRIPT" --workers "$workers" --_threaded 0; } 2>&1 | tee -a benchmark_results.txt
-    echo "-------------------------"
-}
+# Run the benchmarks
+for omega in "${OMEGA_VALUES[@]}"
+do
+  # Pad omega to 4 digits (e.g., 0025)
+  omega_padded=$(printf "%04d" "$omega")
 
-run_benchmark_cpython_threaded() {
-    local workers=$1
-    export PYTHON_GIL=0
-    echo "Running $SCRIPT with free-threaded CPython and $workers workers..."
-    { time "$VENV_THREAD" -O "$SCRIPT" --workers "$workers" --_threaded 1; } 2>&1 | tee -a benchmark_results.txt
-    echo "-------------------------"
-}
+  echo "Running benchmark for omega=$omega..."
 
-# Initialize results
-echo "Benchmarking Results - $(date)" > benchmark_results.txt
-echo "=== Benchmarking with 0 workers ===" | tee -a benchmark_results.txt
+  start_time=$(date +%s.%N)
 
-#run_benchmark_pypy 0
-#run_benchmark_cpython 0
+  PYTHON_GIL=0 python3.13t -O meebits.py \
+    --start_date "$START_DATE" \
+    --end_date "$END_DATE" \
+    --buffer "$BUFFER" \
+    --omega "$omega" \
+    --workers "$WORKERS" \
+    --task_queue "$TASK_QUEUE" \
+    --gc_max "$GC_MAX" \
+    --gc_cooldown "$GC_COOLDOWN" \
+    --log_prefix "$LOG_PREFIX-omega$omega_padded" \
+    --log_dir "$LOG_DIR" \
+    --progress "$PROGRESS"
 
-for workers in "${WORKERS_LIST[@]}"; do
-    echo "=== Benchmarking with $workers workers ===" | tee -a benchmark_results.txt
+  end_time=$(date +%s.%N)
+  execution_time=$(echo "$end_time - $start_time" | bc)
 
-    run_benchmark_pypy "$workers"
-    run_benchmark_cpython_threaded "$workers"
-#    run_benchmark_cpython "$workers"
-
-    echo "=========================================" | tee -a benchmark_results.txt
+  echo "$omega,$execution_time" >> "$RESULTS_FILE"
 done
 
-echo "Benchmarking complete! Results saved in benchmark_results.txt"
+echo "Benchmark complete. Results written to $RESULTS_FILE"

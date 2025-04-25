@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import queue
 from concurrent.futures import Future, ThreadPoolExecutor, ALL_COMPLETED, FIRST_COMPLETED, wait
 from enum import auto, Enum
 from typing import TypeVar, Hashable, Generic
@@ -15,14 +16,19 @@ class TaskType(Enum):
 K = TypeVar('K', bound=Hashable)
 
 
+class BoundedThreadPoolExcecutor(ThreadPoolExecutor):
+    def __init__(self, max_workers: int, queue_size: int):
+        super().__init__(max_workers=max_workers)
+        self._work_queue = queue.Queue(maxsize=queue_size)
+
+
 class TaskRegistry(Generic[K]):
-    def __init__(self, max_workers: int = 0):
+    def __init__(self, max_workers: int, queue_size: int):
         self._running: dict[tuple[TaskType, K], Future] = {}
         self._completed: dict[tuple[TaskType, K], Future] = {}
-        self._max_workers = max_workers
-        self._pool: ThreadPoolExecutor | None = (
-            ThreadPoolExecutor(max_workers=self._max_workers)
-            if self._max_workers > 0
+        self._pool: BoundedThreadPoolExcecutor | None = (
+            BoundedThreadPoolExcecutor(max_workers=max_workers, queue_size=queue_size)
+            if max_workers > 0 and queue_size > 0
             else None
         )
 
@@ -67,11 +73,11 @@ class TaskRegistry(Generic[K]):
         return_when = ALL_COMPLETED if await_all else FIRST_COMPLETED
         done, not_done = set(), self._running.values()
         # Either wait until one task is completed or if specified all no task is uncompleted
-        while len(done) == 0 and (not await_all or len(not_done) > 0):
+        while len(done) < self._queue_size / 2 or await_all and len(not_done) == 0:
             done, not_done = wait(
                 set(self._running.values()),
                 return_when=return_when,
-                timeout=60  # 60 Seconds timeout
+                timeout=self._wait_timeout  # 60 Seconds timeout
             )
         self.update_running_tasks()
 
@@ -79,8 +85,8 @@ class TaskRegistry(Generic[K]):
         key = (task_type, task_key)
 
         if self._pool is not None:
-            while len(self._running) >= self._max_workers:
-                self.wait()
+            # while len(self._running) >= self._queue_size:
+            #     self.wait()
             if persist:
                 self._running[key] = self._pool.submit(fn, *args, **kwargs)
             else:
