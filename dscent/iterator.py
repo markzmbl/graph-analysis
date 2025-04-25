@@ -345,7 +345,7 @@ class GraphCycleIterator:
 
     def cleanup(self):
         self._prune_reverse_reachability()
-        # self._prune_transaction_graph()
+        self._prune_transaction_graph()
         self._last_cleaned = self._iteration_count
 
     def _get_log_line(

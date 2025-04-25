@@ -28,6 +28,7 @@ _DEFAULT_GC_MAX = "48GB"
 # _DEFAULT_GC_MAX = "100MB"
 _DEFAULT_GC_COOLDOWN = 10_000_000
 # _DEFAULT_GC_COOLDOWN = 10_000
+_DEFAULT_LOG_INTERVAL = 60
 _DEFAULT_LOG_PREFIX = "log"
 _DEFAULT_LOG_DIR = "."
 _DEFAULT_PROGRESS_BAR = True
@@ -64,6 +65,7 @@ def main(
         queue_size: int = _DEFAULT_QUEUE_SIZE,
         gc_max: str | int = _DEFAULT_GC_MAX,
         gc_cooldown: int = _DEFAULT_GC_COOLDOWN,
+        log_interval: int = _DEFAULT_LOG_INTERVAL,
         log_prefix: str = _DEFAULT_LOG_PREFIX,
         log_directory: str | Path = _DEFAULT_LOG_DIR,
         progress_bar: bool = _DEFAULT_PROGRESS_BAR,
@@ -86,9 +88,9 @@ def main(
                 omega=omega,
                 max_workers=workers,
                 queue_size=queue_size,
-                logging_interval=1,
                 garbage_collection_max=gc_max,
                 garbage_collection_cooldown=gc_cooldown,
+                logging_interval=log_interval,
                 log_stream=memory_log_stream,
                 yield_seeds=True,
                 progress_bar=progress_bar,
@@ -116,8 +118,9 @@ if __name__ == '__main__':
     parser.add_argument("--task_queue", default=_DEFAULT_QUEUE_SIZE, type=int, help="Size of task queue")
     parser.add_argument("--gc_max", default=_DEFAULT_GC_MAX, type=str, help="Garbage Collection maximum memory")
     parser.add_argument("--gc_cooldown", default=_DEFAULT_GC_COOLDOWN, type=int, help="Garbage Collection cooldown")
+    parser.add_argument("--log_interval", default=_DEFAULT_LOG_INTERVAL, type=int, help="Logging interval")
     parser.add_argument("--log_prefix", default=_DEFAULT_LOG_PREFIX, type=str, help="Log file prefix")
-    parser.add_argument("--log_dir", default=_DEFAULT_LOG_DIR, type=str, help="Log file prefix")
+    parser.add_argument("--log_dir", default=_DEFAULT_LOG_DIR, type=str, help="Log file directory")
     parser.add_argument("--progress", default=_DEFAULT_PROGRESS_BAR, type=bool, help="Show Progress Bar")
     args = parser.parse_args()
     main(
@@ -129,6 +132,7 @@ if __name__ == '__main__':
         queue_size=args.task_queue,
         gc_max=args.gc_max,
         gc_cooldown=args.gc_cooldown,
+        log_interval=args.log_interval,
         log_directory=args.log_dir,
         log_prefix=args.log_prefix,
         progress_bar=args.progress,

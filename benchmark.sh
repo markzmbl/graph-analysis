@@ -16,6 +16,7 @@ WORKERS=16
 TASK_QUEUE=5000000
 GC_MAX="128GB"
 GC_COOLDOWN=1000000
+LOG_INTERVAL=60
 LOG_PREFIX="april-run"
 LOG_DIR="/export/share/markusz33dm/logs/"
 PROGRESS=true
@@ -46,6 +47,7 @@ do
     --task_queue "$TASK_QUEUE" \
     --gc_max "$GC_MAX" \
     --gc_cooldown "$GC_COOLDOWN" \
+    --log_interval "$LOG_INTERVAL" \
     --log_prefix "$LOG_PREFIX-omega$omega_padded" \
     --log_dir "$LOG_DIR" \
     --progress "$PROGRESS"
