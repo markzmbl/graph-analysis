@@ -33,13 +33,13 @@ def test_direct_reachability_initialization():
 
 
 def test_get_trim_index():
-    """Test get_trim_index method."""
+    """Test get_split_index method."""
     dr = DirectReachability(vertices=["A", "B", "C"], timestamps=[10, 20, 30])
 
-    assert dr.get_trim_index(15, strict=True, left=True) == 1
-    assert dr.get_trim_index(20, strict=False, left=True) == 1
-    assert dr.get_trim_index(25, strict=True, left=False) == 2
-    assert dr.get_trim_index(30, strict=False, left=False) == 3
+    assert dr.get_split_index(15, strict=True, left=True) == 1
+    assert dr.get_split_index(20, strict=False, left=True) == 1
+    assert dr.get_split_index(25, strict=True, left=False) == 2
+    assert dr.get_split_index(30, strict=False, left=False) == 3
 
 
 def test_trim_before():

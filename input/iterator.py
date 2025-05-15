@@ -7,7 +7,7 @@ from functools import cached_property
 from pathlib import Path
 import networkx as nx
 
-from dscent.types_ import Interaction
+from dscent.types_ import EdgeInteraction
 
 DATE_FORMAT = "%Y-%m-%d"
 
@@ -252,12 +252,12 @@ class GraphEdgeIterator:
         self.graph_path_iterator = iter(get_graph_paths(start_date=self.start_date, end_date=self.end_date))
 
         self.buffer_count = buffer_count
-        # Initialize a buffer (list) of size buffer_count for _running_tasks or None
+        # Initialize a buffer (list) of size buffer_count for vertex_timestamps or None
         self.buffer = [None] * self.buffer_count
 
     def _initialize_buffer(self):
         # Empty iterator for the currently active _transaction_graph; updated on demand
-        self.current_edges: Iterator[Interaction] = iter([])
+        self.current_edges: Iterator[EdgeInteraction] = iter([])
 
         # ThreadPoolExecutor with _max_workers=1 to asynchronously load the next _transaction_graph(s)
         self.executor: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=1)
@@ -338,7 +338,7 @@ class GraphEdgeIterator:
         """
         return GraphEdgeIterator(start_date=self.start_date, end_date=self.end_date, buffer_count=self.buffer_count)
 
-    def __next__(self) -> Interaction:
+    def __next__(self) -> EdgeInteraction:
         """
         Yields the next edge in the current _transaction_graph. If the current _transaction_graph is
         exhausted, moves on to the next buffer slot and triggers a load

@@ -10,11 +10,11 @@ from networkx.classes.filters import show_nodes, no_filter
 
 from dscent.types_ import (
     Timestamp,
-    TimeDelta,
-    SingleTimedVertex,
+    Timedelta,
+    PointVertex,
     Vertex,
     FrozenTimeSequence,
-    MultiTimedVertex, TimeSequence,
+    SeriesVertex, MutableTimeSequence,
 )
 from dscent.reachability import DirectReachability, SequentialReachability
 
@@ -24,7 +24,7 @@ class TransactionGraph(nx.MultiDiGraph):
         *_, end_timestamp = next(iter(self.edges(keys=True)))
         return end_timestamp
 
-    def length(self) -> TimeDelta:
+    def length(self) -> Timedelta:
         timestamps = [timestamp for *_, timestamp in self.edges(keys=True)]
         timestamps = sorted(timestamps)
         if not timestamps:
@@ -59,8 +59,11 @@ class TransactionGraph(nx.MultiDiGraph):
         :param begin: The minimum timestamp for filtering edges. Edges with timestamps before this value are excluded.
         :param end: The maximum timestamp for filtering edges. Edges with timestamps after this value are excluded.
         :param nodes: A sequence of nodes to include in the subgraph. If None, all nodes are considered.
-        :param closed: If True, the data_interval is closed [begin, upper_limit], meaning edges with timestamps exactly equal to `upper_limit` are included.
-                       If False, the data_interval is half-open [begin, upper_limit), meaning edges with `upper_limit` timestamp are excluded.
+        :param closed:
+            If True, the data_interval is closed [begin, upper_limit],
+            meaning edges with timestamps exactly equal to `upper_limit` are included.
+            If False, the data_interval is half-open [begin, upper_limit),
+            meaning edges with `upper_limit` timestamp are excluded.
         :return: A subgraph view containing only edges within the specified time range and optionally filtered by nodes.
         """
         begin_filter = no_filter
@@ -93,7 +96,7 @@ class _ClosureManager(DefaultDict[Vertex, Timestamp]):
         super().__init__(self._infinity)  # Ensure valid factory
         self.dependencies: DefaultDict[Vertex, DirectReachability] = defaultdict(DirectReachability)
 
-    def add_dependency(self, origin: Vertex, dependency: SingleTimedVertex):
+    def add_dependency(self, origin: Vertex, dependency: PointVertex):
         # U(v) ← U(v) \ {(w, t′)}
         self.dependencies[origin].trim_after(dependency.timestamp)
         # U(v) ← U(v) ∪ {(w, t)}
@@ -120,12 +123,12 @@ class ExplorationGraph(TransactionGraph):
         # for (w, t_w) ∈ U(v) do
         dependencies = self._closure.dependencies[origin]
         # if t_w < t_v then
-        idx = dependencies.get_trim_index(closing_time, strict=True, left=False)
+        idx = dependencies.timestamps.get_split_index(closing_time, strict=True, left=False)
 
         for dependency in dependencies[idx:]:
             # T[w, v] = {t | (w, v, t) ∈ E}
             # T ← {t ∈ T[w, v] | t_v ≤ t}
-            timestamps = TimeSequence(self[dependency.root][origin])
+            timestamps = FrozenTimeSequence(self[dependency.root][origin])
             timestamps.trim_before(closing_time, strict=False)
 
             # if T ≠ ∅ then
@@ -133,7 +136,7 @@ class ExplorationGraph(TransactionGraph):
                 # U(v) ← U(v) ∪ {(w, min(T))}
                 self._closure.add_dependency(
                     origin=origin,
-                    dependency=SingleTimedVertex(vertex=dependency.root, timestamp=timestamps.begin())
+                    dependency=PointVertex(vertex=dependency.root, timestamp=timestamps.begin())
                 )
             # t_max ← max {t ∈ T[w, v] | t < t_v}
             timestamps.trim_after(closing_time)
@@ -178,7 +181,6 @@ class ExplorationGraph(TransactionGraph):
         # Determine whether a cycle is present
         # if s ∈ N then
 
-        cycle_time_sequence = FrozenTimeSequence()
         if (
                 self.root_vertex in successor_view
                 # T ← {t | (v_cur, s, t) ∈ Out}
@@ -193,7 +195,7 @@ class ExplorationGraph(TransactionGraph):
             cycle = SequentialReachability(path)
             # Expand(B, v_cur → Ts)
             try:
-                cycle.append(MultiTimedVertex(vertex=self.root_vertex, timestamps=cycle_time_sequence))
+                cycle.append(SeriesVertex(vertex=self.root_vertex, timestamps=cycle_time_sequence))
                 # Memorize new cycle
                 cycles.append(cycle)
             except ValueError:
@@ -205,7 +207,7 @@ class ExplorationGraph(TransactionGraph):
             if successor_vertex == self.root_vertex:
                 continue
             # T_x ← {t | (v_cur, x, t) ∈ Out}
-            successor_time_sequence = TimeSequence(successor_timestamps)
+            successor_time_sequence = MutableTimeSequence(successor_timestamps)
             # T_x′ ← {t ∈ Tx |t < ct(x)}
             successor_time_sequence.trim_after(upper_limit=self._closure[successor_vertex])
             # if T_x′ ≠ ∅ then
@@ -215,7 +217,7 @@ class ExplorationGraph(TransactionGraph):
             # lastx ← AllBundles(s, Expand(B, v_cur -T_x'→ x)
             next_path = deepcopy(path)
             try:
-                next_path.append(MultiTimedVertex(
+                next_path.append(SeriesVertex(
                     vertex=successor_vertex,
                     timestamps=FrozenTimeSequence(successor_time_sequence))
                 )
@@ -225,13 +227,13 @@ class ExplorationGraph(TransactionGraph):
                 closing_time = max(new_closing_time, closing_time)
 
                 # t_m ← min({t ∈ Tx | t > last_x})
-                open_time_sequence = TimeSequence(successor_timestamps)
+                open_time_sequence = MutableTimeSequence(successor_timestamps)
                 open_time_sequence.trim_before(new_closing_time)
                 if len(open_time_sequence) > 0:  # TODO: check
                     # Extend(U(x), (v_cur, t_m))
                     self._closure.add_dependency(
                         origin=successor_vertex,
-                        dependency=SingleTimedVertex(vertex=current_vertex, timestamp=open_time_sequence.begin())
+                        dependency=PointVertex(vertex=current_vertex, timestamp=open_time_sequence.begin())
                     )
             except ValueError:  # Timestamps incompatible
                 pass
@@ -246,12 +248,12 @@ class ExplorationGraph(TransactionGraph):
     def simple_cycles(self, next_seed_begin: Timestamp) -> list[BundledCycle]:
         all_cycles = []
         for successor_vertex in self.successors(self.root_vertex):
-            timestamps = TimeSequence(self[self.root_vertex][successor_vertex])
+            timestamps = MutableTimeSequence(self[self.root_vertex][successor_vertex])
             timestamps.trim_after(next_seed_begin)
             if len(timestamps) == 0:
                 continue
             _, sequential_reachabilities = self._simple_cycles(
-                path=SequentialReachability([MultiTimedVertex(
+                path=SequentialReachability([SeriesVertex(
                     vertex=successor_vertex,
                     timestamps=FrozenTimeSequence(timestamps)
                 )]),
@@ -275,8 +277,6 @@ class ExplorationGraph(TransactionGraph):
             assert len(timestamps) > 0
             for timestamp in timestamps:
                 u, v = predecessor.vertex, successor.vertex
-
-                assert self.has_edge(u, v, timestamp), f"{u}, {v}, {timestamp} - {sequential_reachability} - {self.edges(keys=True)}"
                 data = self.get_edge_data(u, v, timestamp, default={})
                 edges.append((u, v, timestamp, data))
         return BundledCycle(edges)

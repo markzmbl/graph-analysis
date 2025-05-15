@@ -1,61 +1,67 @@
 from __future__ import annotations
 
+from abc import ABC
 from bisect import bisect_right, bisect_left
-from abc import ABC, abstractmethod
-from collections.abc import Iterable
-from dataclasses import dataclass
-from typing import Hashable, NamedTuple, Sequence
+from collections import defaultdict
+from collections.abc import Iterable, Sequence, Hashable
+from dataclasses import dataclass, field
+from typing import NamedTuple, Any, TypeVar, Generic
 
-Vertex = Hashable
-Timestamp = int
-TimeDelta = int
+from sortedcontainers import SortedList
+
+# --- Type variables
+Vertex = TypeVar("Vertex", bound=Hashable)  # Vertex
+Timestamp = TypeVar("Timestamp", bound=int)  # Timestamp
+Timedelta = TypeVar("Timedelta", bound=int)  # Timedelta
 
 
-class Interval(NamedTuple):
+# --- Core structures
+@dataclass(frozen=True)
+class Interval:
     begin: Timestamp
     end: Timestamp
 
 
-class Interaction(NamedTuple):
-    source: Vertex
+@dataclass(frozen=True)
+class Interaction:
     target: Vertex
     timestamp: Timestamp
 
 
-class TimeSequenceABC(Sequence[Timestamp], ABC):
-    def __init__(self, timestamps: Sequence[Timestamp] | None):
-        if timestamps is not None:
-            assert list(timestamps) == sorted(timestamps), "Timestamps must be in sorted order"
+@dataclass(frozen=True)
+class EdgeInteraction(Interaction):
+    source: Vertex
+
+
+@dataclass(frozen=True)
+class TargetInteraction(Interaction):
+    sources: list[Vertex]
+
+
+class TransactionBlock(defaultdict[Vertex, list[Vertex]]):
+    def __init__(self, timestamp: Timestamp, **kwargs: Any):
+        super().__init__(list, **kwargs)
+        self.timestamp = timestamp
+
+
+# --- Time Sequence Base Class
+
+class TimeSequence(Sequence[Timestamp], ABC):
+    # def __init__(self, *args: Any, **kwargs: Any):
+    #     super().__init__(*args, **kwargs)
+    #     assert self == sorted(self)
 
     def begin(self) -> Timestamp:
-        """
-        Returns the first timestamp in the sequence.
-        Raises a ValueError if the sequence is empty.
-        """
-        try:
-            return next(iter(self))
-        except StopIteration:
-            raise ValueError("FrozenTimeSequence is empty, cannot retrieve the first element.")
+        if len(self) == 0:
+            raise ValueError(f"{self.__class__.__name__} is empty, cannot retrieve the first element.")
+        return self[0]
 
     def end(self) -> Timestamp:
-        """
-        Returns the last timestamp in the sequence.
-        Raises a ValueError if the sequence is empty.
-        """
-        try:
-            return next(reversed(self))
-        except StopIteration:
-            raise ValueError("FrozenTimeSequence is empty, cannot retrieve the last element.")
+        if len(self) == 0:
+            raise ValueError(f"{self.__class__.__name__} is empty, cannot retrieve the last element.")
+        return self[-1]
 
-    def get_trim_index(self, limit: Timestamp, strict: bool, left: bool) -> int:
-        """
-        Returns the appropriate index for trimming operations using bisect.
-
-        :param limit: The threshold timestamp.
-        :param strict: Determines whether to exclude the limit itself.
-        :param left: If True, trims from the left (before limit). Otherwise, trims from the right (after limit).
-        :return: The index to slice the list.
-        """
+    def get_split_index(self, limit: Timestamp, strict: bool, left: bool) -> int:
         if len(self) == 0:
             return 0
         elif left and limit <= self[0]:
@@ -68,102 +74,88 @@ class TimeSequenceABC(Sequence[Timestamp], ABC):
         else:
             return bisect_left(self, limit) if strict else bisect_right(self, limit)
 
+    def get_trimmed_before(self, lower_limit: Timestamp, strict: bool = True) -> TimeSequence:
+        idx = self.get_split_index(lower_limit, strict, left=True)
+        return self[idx:]
 
-class FrozenTimeSequence(tuple[Timestamp], TimeSequenceABC):
-    """A sorted sequence of timestamps with efficient trimming methods."""
+    def get_trimmed_after(self, upper_limit: Timestamp, strict: bool = True) -> TimeSequence:
+        idx = self.get_split_index(upper_limit, strict, left=False)
+        return self[:idx]
 
-    def __init__(self, timestamps: Iterable[Timestamp] | None = None):
-        """
-        Initializes a sorted sequence of timestamps.
-
-        :param timestamps: A list of datetime objects.
-        """
-        super().__init__(tuple(timestamps or []))
-
-    def get_trimmed_before(self, lower_limit: Timestamp, strict: bool = True) -> FrozenTimeSequence:
-        idx = self.get_trim_index(lower_limit, strict, left=True)
-        return FrozenTimeSequence(self[idx:])
-
-    def get_trimmed_after(self, upper_limit: Timestamp, strict: bool = True) -> FrozenTimeSequence:
-        idx = self.get_trim_index(upper_limit, strict, left=False)
-        return FrozenTimeSequence(self[: idx])
+    def __getitem__(self, index: int | slice) -> Timestamp | TimeSequence[Timestamp]:
+        result = super().__getitem__(index)
+        if isinstance(index, slice):
+            return self.__class__(result)
+        return result
 
 
-class TimeSequence(list[Timestamp], TimeSequenceABC):
-    def __init__(self, timestamps: Sequence[Timestamp] | None = None):
-        """
-        Initializes a sorted, mutable sequence of timestamps.
+class FrozenTimeSequence(tuple, TimeSequence):
+    """A sorted, immutable sequence of timestamps."""
+    pass
 
-        :param timestamps: A list of datetime objects.
-        """
-        super().__init__(list(timestamps or []))
+
+class MutableTimeSequence(list, TimeSequence):
+    """A sorted, mutable sequence of timestamps."""
 
     def trim_before(self, lower_limit: Timestamp, strict: bool = True) -> None:
-        """
-        Removes timestamps before the given upper_limit.
-
-        :param lower_limit: The threshold timestamp.
-        :param strict: If True, removes elements strictly before the upper_limit.
-                       If False, removes elements before or equal to the upper_limit.
-        :return: A new FrozenTimeSequence with the filtered timestamps.
-        """
-        idx = self.get_trim_index(lower_limit, strict, left=True)
-        del self[: idx]
+        idx = self.get_split_index(lower_limit, strict, left=True)
+        del self[:idx]
 
     def trim_after(self, upper_limit: Timestamp, strict: bool = True) -> None:
-        """
-        Removes timestamps after the given upper_limit.
-
-        :param upper_limit: The threshold timestamp.
-        :param strict: If True, removes elements strictly after the upper_limit.
-                       If False, removes elements after or equal to the upper_limit.
-        :return: A new FrozenTimeSequence with the filtered timestamps.
-        """
-        idx = self.get_trim_index(upper_limit, strict, left=False)
+        idx = self.get_split_index(upper_limit, strict, left=False)
         del self[idx:]
 
 
-@dataclass(frozen=True)
-class TimedVertexABC(ABC):
-    vertex: Vertex
+# --- TimedEvent Vertices
 
-    @abstractmethod
+class TimedEvent:
     def begin(self) -> Timestamp:
-        """Returns the minimum timestamp."""
         raise NotImplementedError
 
-    @abstractmethod
     def end(self) -> Timestamp:
-        """Returns the maximum timestamp."""
         raise NotImplementedError
-
-    def __lt__(self, other: TimedVertexABC) -> bool:
-        return (self.begin(), self.vertex) < (other.begin(), other.vertex)
 
 
 @dataclass(frozen=True)
-class SingleTimedVertex(TimedVertexABC):
+class InstantaneousEvent(TimedEvent):
+    """A point in time associated with a vertex."""
     timestamp: Timestamp
 
     def begin(self) -> Timestamp:
         return self.timestamp
 
-    def end(self):
+    def end(self) -> Timestamp:
         return self.timestamp
-
-    def __str__(self):
-        return f"({self.vertex}, {repr(self.timestamp)})"
 
 
 @dataclass(frozen=True)
-class MultiTimedVertex(TimedVertexABC):
+class TemporalSpanEvent(TimedEvent):
+    """A point in time associated with a vertex."""
     timestamps: FrozenTimeSequence
 
     def begin(self) -> Timestamp:
         return self.timestamps.begin()
 
-    def end(self):
+    def end(self) -> Timestamp:
         return self.timestamps.end()
 
-    def __str__(self):
-        return f"({self.vertex}, [{', '.join(map(str, self.timestamps))}])"
+
+@dataclass(frozen=True)
+class PointVertex(InstantaneousEvent):
+    """A vertex associated with a single point in time."""
+    vertex: Vertex
+
+    def __lt__(self, other: PointVertex) -> bool:
+        return (self.begin(), self.vertex) < (other.begin(), other.vertex)
+
+
+@dataclass(frozen=True)
+class PointVertices(InstantaneousEvent):
+    """A collection of vertices associated with a single point in time."""
+    vertices: list[Vertex]
+
+
+@dataclass(frozen=True)
+class SeriesVertex(TemporalSpanEvent):
+    """A vertex associated with multiple timestamps."""
+    vertex: Vertex
