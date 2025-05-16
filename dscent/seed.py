@@ -306,7 +306,7 @@ class SeedGenerator:
         wait(self._running_tasks)
 
     def cleanup(self, current_time: Timestamp):
-        for task in self._running_tasks:
+        for task in list(self._running_tasks):
             if task.done():
                 self._running_tasks.remove(task)
         self._prune_reverse_reachability(current_time=current_time)
@@ -327,17 +327,8 @@ class SeedExplorer:
         # Add edge to the transaction graph
         self._transaction_graph.add_edge(source, target, key=timestamp, **edge_data)
 
-    def _explore_seed(self, graph_view: MultiDiGraph, primed_seed: Seed) -> list[BundledCycle]:
-        # Root Vertex
-        root_vertex = primed_seed.root
-        # Make Copy
-        sub_graph = ExplorationGraph(graph_view, root_vertex=root_vertex)
-        next_seed_begin = (
-            primed_seed.next_begin
-            if primed_seed.next_begin is not None
-            else primed_seed.interval.begin + self._omega
-        )
-        return sub_graph.simple_cycles(next_seed_begin)
+    def _explore_seed(self, expoloration_graph: ExplorationGraph, next_seed_begin: Timestamp) -> list[BundledCycle]:
+        return expoloration_graph.simple_cycles(next_seed_begin)
 
     def submit(self, primed_seed: Seed) -> None:
         """
@@ -353,13 +344,22 @@ class SeedExplorer:
             closed=True,
             nodes=primed_seed.candidates
         )
+        # Root Vertex
+        root_vertex = primed_seed.root
+        # Make Copy
+        sub_graph = ExplorationGraph(graph_view, root_vertex=root_vertex)
+        next_seed_begin = (
+            primed_seed.next_begin
+            if primed_seed.next_begin is not None
+            else primed_seed.interval.begin + self._omega
+        )
         if self._thread_pool is not None:
             self._running_tasks[primed_seed] = self._thread_pool.submit(
-                self._explore_seed, graph_view, primed_seed
+                self._explore_seed, sub_graph, next_seed_begin
             )
         else:
             future = Future()
-            future.set_result(self._explore_seed(graph_view, primed_seed))
+            future.set_result(self._explore_seed(sub_graph, next_seed_begin))
             self._running_tasks[primed_seed] = future
 
     def pop_detected_cycle_graphs(
@@ -414,4 +414,4 @@ class SeedExplorer:
         wait(self._running_tasks.values())
 
     def cleanup(self):
-        pass
+        self._prune_transaction_graph()
