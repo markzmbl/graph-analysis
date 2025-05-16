@@ -197,7 +197,6 @@ class GraphCycleIterator:
             self._seed_explorer.add_edge(source, target, timestamp=current_time, **edge_data)
             # First iteration: Initialize transaction block
             if transaction_block is None:
-                print("START")
                 transaction_block = TransactionBlock(timestamp=current_time)
             # Check if the current time is different from the last processed time
             if current_time != transaction_block.timestamp:

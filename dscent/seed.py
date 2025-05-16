@@ -164,46 +164,50 @@ class SeedGenerator:
             target_reverse_reachability.add(PointVertices(vertices=sources, timestamp=block_timestamp))
             # S(b) ← S(b)\{(x, tx) ∈ S(b) | tx ≤ t−ω}
             trimmed_target_reverse_reachability = target_reverse_reachability.get_trimmed_before(lower_limit)
-            # Output dict to indicate if new seeds are added
-            new_seeds: dict[slice, Candidates] = {}
-            for source in sources:
-                if source not in self._reverse_reachability:
-                    continue
-                # if S(a) exists then
-                with self._reverse_reachability.access(source) as source_reverse_reachability:
-                    # Prune old entries for relevant edges
-                    # S(a) ← S(a)\{(x,tx) ∈ S(a) | tx ≤ t−ω}
-                    trimmed_source_reverse_reachability = source_reverse_reachability.get_trimmed_before(lower_limit)
 
-                    if len(trimmed_source_reverse_reachability) == 0:
-                        del self._reverse_reachability[source]
-                        continue
+        # Output dict to indicate if new seeds are added
+        new_seeds: dict[slice, Candidates] = {}
+        for source in sources:
+            if source not in self._reverse_reachability:
+                continue
+            # if S(a) exists then
+            with self._reverse_reachability.access(source) as source_reverse_reachability:
+                # Prune old entries for relevant edges
+                # S(a) ← S(a)\{(x,tx) ∈ S(a) | tx ≤ t−ω}
+                trimmed_source_reverse_reachability = source_reverse_reachability.get_trimmed_before(lower_limit)
 
-                    # Propagate reachability
-                    # S(b) ← S(b) ∪ S(a)
-                    trimmed_target_reverse_reachability |= trimmed_source_reverse_reachability
-                    # for (b, tb) ∈ S(b) do
-                    cyclic_reachability = DirectReachability([
-                        v for v in trimmed_target_reverse_reachability
-                        if v.vertex == target and v.timestamp < block_timestamp
-                    ])
-                    # {c ∈ S(a), tc > tb}
-                    for cyclic_reachable in cyclic_reachability:
-                        # C ← {c | (c,tc) ∈ S(a),tc > tb} ∪ {a}
-                        candidate_reachability = DirectReachability(trimmed_source_reverse_reachability)
-                        candidates = Candidates([source])
-                        candidates.update(c.vertex for c in candidate_reachability)
-                        if len(candidates) > 1:
-                            # Output (b, [tb, t], C)
-                            seed_range = slice(cyclic_reachable.timestamp, block_timestamp)
-                            new_seeds[seed_range] = candidates
-                    # trim source reachability
-                    source_reverse_reachability.trim_before(lower_limit=self._get_vertex_time(source))
+            if len(trimmed_source_reverse_reachability) == 0:
+                del self._reverse_reachability[source]
+                continue
 
-            # Remove to avoid duplicate output
-            # S(b) ← S(b) \ {(b, tb)}
-            # And trim the reachability set
-            target_time = self._get_vertex_time(vertex=target)
+            # Propagate reachability
+            # S(b) ← S(b) ∪ S(a)
+            trimmed_target_reverse_reachability |= trimmed_source_reverse_reachability
+            # for (b, tb) ∈ S(b) do
+            cyclic_reachability = DirectReachability([
+                v for v in trimmed_target_reverse_reachability
+                if v.vertex == target and v.timestamp < block_timestamp
+            ])
+            # {c ∈ S(a), tc > tb}
+            for cyclic_reachable in cyclic_reachability:
+                # C ← {c | (c,tc) ∈ S(a),tc > tb} ∪ {a}
+                candidate_reachability = DirectReachability(trimmed_source_reverse_reachability)
+                candidates = Candidates([source])
+                candidates.update(c.vertex for c in candidate_reachability)
+                if len(candidates) > 1:
+                    # Output (b, [tb, t], C)
+                    seed_range = slice(cyclic_reachable.timestamp, block_timestamp)
+                    new_seeds[seed_range] = candidates
+
+            with self._reverse_reachability.access(source) as source_reverse_reachability:
+                # trim source reachability
+                source_reverse_reachability.trim_before(lower_limit=self._get_vertex_time(source))
+
+        # Remove to avoid duplicate output
+        # S(b) ← S(b) \ {(b, tb)}
+        # And trim the reachability set
+        target_time = self._get_vertex_time(vertex=target)
+        with self._reverse_reachability.access(target):
             self._reverse_reachability[target] = DirectReachability(
                 reverse_reachable
                 for reverse_reachable in trimmed_target_reverse_reachability
