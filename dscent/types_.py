@@ -5,7 +5,7 @@ from bisect import bisect_right, bisect_left
 from collections import defaultdict
 from collections.abc import Iterable, Sequence, Hashable
 from dataclasses import dataclass, field
-from typing import NamedTuple, Any, TypeVar, Generic
+from typing import NamedTuple, Any, TypeVar, Generic, overload
 
 from sortedcontainers import SortedList
 
@@ -46,11 +46,7 @@ class TransactionBlock(defaultdict[Vertex, list[Vertex]]):
 
 # --- Time Sequence Base Class
 
-class TimeSequence(Sequence[Timestamp], ABC):
-    # def __init__(self, *args: Any, **kwargs: Any):
-    #     super().__init__(*args, **kwargs)
-    #     assert self == sorted(self)
-
+class TimeSequenceABC(Sequence, ABC):
     def begin(self) -> Timestamp:
         if len(self) == 0:
             raise ValueError(f"{self.__class__.__name__} is empty, cannot retrieve the first element.")
@@ -74,32 +70,43 @@ class TimeSequence(Sequence[Timestamp], ABC):
         else:
             return bisect_left(self, limit) if strict else bisect_right(self, limit)
 
-    def get_trimmed_before(self, lower_limit: Timestamp, strict: bool = True) -> TimeSequence:
+    def get_trimmed_before(self, lower_limit: Timestamp, strict: bool = True) -> 'TimeSequenceABC':
         idx = self.get_split_index(lower_limit, strict, left=True)
-        return self[idx:]
+        return self.__class__(self[idx:])
 
-    def get_trimmed_after(self, upper_limit: Timestamp, strict: bool = True) -> TimeSequence:
+    def get_trimmed_after(self, upper_limit: Timestamp, strict: bool = True) -> 'TimeSequenceABC':
         idx = self.get_split_index(upper_limit, strict, left=False)
-        return self[:idx]
+        return self.__class__(self[:idx])
 
-    def __getitem__(self, index: int | slice) -> Timestamp | TimeSequence[Timestamp]:
-        result = super().__getitem__(index)
-        if isinstance(index, slice):
-            return self.__class__(result)
+
+class FrozenTimeSequence(tuple, TimeSequenceABC):
+    def __new__(cls, iterable):
+        assert (iterable := list(iterable)) == sorted(iterable)
+        return super().__new__(cls, iterable)
+
+    def __getitem__(self, item):
+        result = super().__getitem__(item)
+        if isinstance(item, slice):
+            return FrozenTimeSequence(result)
         return result
 
 
-class FrozenTimeSequence(tuple, TimeSequence):
-    """A sorted, immutable sequence of timestamps."""
-    pass
-
-
-class MutableTimeSequence(list, TimeSequence):
+class MutableTimeSequence(list, TimeSequenceABC):
     """A sorted, mutable sequence of timestamps."""
+
+    def __init__(self, iterable):
+        assert (iterable := list(iterable)) == sorted(iterable)
+        super().__init__(iterable)
+
+    def __getitem__(self, item):
+        result = super().__getitem__(item)
+        if isinstance(item, slice):
+            return MutableTimeSequence(result)
+        return result
 
     def trim_before(self, lower_limit: Timestamp, strict: bool = True) -> None:
         idx = self.get_split_index(lower_limit, strict, left=True)
-        del self[:idx]
+        del self[: idx]
 
     def trim_after(self, upper_limit: Timestamp, strict: bool = True) -> None:
         idx = self.get_split_index(upper_limit, strict, left=False)

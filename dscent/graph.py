@@ -128,7 +128,7 @@ class ExplorationGraph(TransactionGraph):
         for dependency in dependencies[idx:]:
             # T[w, v] = {t | (w, v, t) ∈ E}
             # T ← {t ∈ T[w, v] | t_v ≤ t}
-            timestamps = FrozenTimeSequence(self[dependency.root][origin])
+            timestamps = MutableTimeSequence(self[dependency.root][origin])
             timestamps.trim_before(closing_time, strict=False)
 
             # if T ≠ ∅ then

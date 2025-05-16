@@ -199,9 +199,10 @@ class SeedGenerator:
                     seed_range = slice(cyclic_reachable.timestamp, block_timestamp)
                     new_seeds[seed_range] = candidates
 
+            source_time = self._get_vertex_time(vertex=source)
             with self._reverse_reachability.access(source) as source_reverse_reachability:
                 # trim source reachability
-                source_reverse_reachability.trim_before(lower_limit=self._get_vertex_time(source))
+                source_reverse_reachability.trim_before(lower_limit=source_time)
 
         # Remove to avoid duplicate output
         # S(b) ← S(b) \ {(b, tb)}

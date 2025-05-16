@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import Iterable
 
-from dscent.types_ import Vertex, Timestamp, TimeSequence, PointVertex, PointVertices, MutableTimeSequence, SeriesVertex
+from dscent.types_ import Vertex, Timestamp, TimeSequenceABC, PointVertex, PointVertices, MutableTimeSequence, SeriesVertex
 
 
 class DirectReachability:
@@ -14,7 +14,7 @@ class DirectReachability:
             self,
             timed_vertices: Iterable[PointVertex[Vertex]] | DirectReachability | None = None,
             vertices: list[Vertex] | None = None,
-            timestamps: list[Timestamp] | TimeSequence[Timestamp] | None = None,
+            timestamps: list[Timestamp] | TimeSequenceABC[Timestamp] | None = None,
     ):
         if isinstance(timed_vertices, DirectReachability):
             self.vertices = list(timed_vertices.vertices)
