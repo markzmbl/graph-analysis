@@ -3,25 +3,26 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import Iterable
 
-from dscent.types_ import Vertex, Timestamp, TimeSequenceABC, PointVertex, PointVertices, MutableTimeSequence, SeriesVertex
+from dscent.types_ import Vertex, Timestamp, PointVertex, PointVertices, SeriesVertex
+from dscent.time_sequence import get_split_index, get_trimmed_after, get_trimmed_before
 
 
 class DirectReachability:
     vertices: list[Vertex]
-    timestamps: MutableTimeSequence[Timestamp]
+    timestamps: list[Timestamp]
 
     def __init__(
             self,
             timed_vertices: Iterable[PointVertex[Vertex]] | DirectReachability | None = None,
             vertices: list[Vertex] | None = None,
-            timestamps: list[Timestamp] | TimeSequenceABC[Timestamp] | None = None,
+            timestamps: list[Timestamp] | None = None,
     ):
         if isinstance(timed_vertices, DirectReachability):
             self.vertices = list(timed_vertices.vertices)
-            self.timestamps = MutableTimeSequence(timed_vertices.timestamps)
+            self.timestamps = list(timed_vertices.timestamps)
         else:
             self.vertices = vertices or []
-            self.timestamps = timestamps or MutableTimeSequence()
+            self.timestamps = timestamps or []
             for timed_vertex in timed_vertices or []:
                 self.vertices.append(timed_vertex.vertex)
                 self.timestamps.append(timed_vertex.timestamp)
@@ -35,12 +36,12 @@ class DirectReachability:
         :param lower_limit:
         :param strict: {(v, t) | t >= upper_limit}
         """
-        idx = self.timestamps.get_split_index(lower_limit, strict, left=True)
+        idx = get_split_index(self.timestamps, lower_limit, strict, left=True)
         del self[: idx]
         assert len(self.vertices) == len(self.timestamps)
 
     def get_trimmed_before(self, lower_limit: Timestamp, strict=False):
-        idx = self.timestamps.get_split_index(lower_limit, strict, left=True)
+        idx = get_split_index(self.timestamps, lower_limit, strict, left=True)
         return self[idx:]
 
     def trim_after(self, upper_limit: Timestamp, strict=False) -> None:
@@ -50,18 +51,18 @@ class DirectReachability:
         :param upper_limit:
         :param strict: {(v, t) | t <= upper_limit}
         """
-        idx = self.timestamps.get_split_index(upper_limit, strict, left=False)
+        idx = get_split_index(self.timestamps, upper_limit, strict, left=False)
         del self[idx:]
         assert len(self.vertices) == len(self.timestamps)
 
     def get_trimmed_after(self, upper_limit: Timestamp, strict=False):
-        idx = self.timestamps.get_split_index(upper_limit, strict, left=False)
+        idx = get_split_index(self.timestamps, upper_limit, strict, left=False)
         return self[: idx]
 
     def add(self, item: PointVertex | PointVertices) -> None:
         """Adds a new vertex and its timestamp in sorted order."""
         vertices = [item.vertex] if isinstance(item, PointVertex) else item.vertices
-        idx = self.timestamps.get_split_index(limit=item.timestamp, strict=True, left=False)
+        idx = get_split_index(self.timestamps, limit=item.timestamp, strict=True, left=False)
         self.timestamps[idx: idx] = len(vertices) * [item.timestamp]
         self.vertices[idx: idx] = vertices
 
@@ -151,7 +152,7 @@ class SequentialReachability(list[SeriesVertex]):
             # Copy and Trim
             item = SeriesVertex(
                 vertex=item.vertex,
-                timestamps=item.timestamps.get_trimmed_before(head.begin(), strict=True)
+                timestamps=get_trimmed_before(item.timestamps, head.begin(), strict=True)
             )
 
         if len(item.timestamps) == 0:
@@ -162,7 +163,7 @@ class SequentialReachability(list[SeriesVertex]):
             # Check if predecessor timestamps need trimming
             if predecessor.end() > successor.end():
                 # Copy and trim
-                trimmed_time_sequence = predecessor.timestamps.get_trimmed_after(successor.end(), strict=True)
+                trimmed_time_sequence = get_trimmed_after(predecessor.timestamps, successor.end(), strict=True)
                 self[predecessor_index] = SeriesVertex(
                     vertex=predecessor.vertex,
                     timestamps=trimmed_time_sequence

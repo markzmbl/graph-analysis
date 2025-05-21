@@ -220,6 +220,9 @@ class GraphCycleIterator:
             if self._memory_limit_exceeded() and self._cleanup_cooled_down():
                 # Cleanup Memory
                 self.cleanup(current_time=current_time)
+                # TODO: max memory is really the hard limit
+                if self._memory_limit_exceeded():
+                    raise MemoryError("Out of memory.")
 
             # --- Logging ---
 
