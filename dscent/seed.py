@@ -265,19 +265,16 @@ class SeedGenerator:
         return primed_seeds
 
     def _prune_reverse_reachability(self, current_time: Timestamp) -> None:
+        lower_limit = current_time - self._omega
         for vertex in list(self._reverse_reachability.keys()):
-            with (
-                self._reverse_reachability.access(vertex) as direct_reachability,
-                self.vertex_timestamps.access(vertex) as vertex_timestamps
-            ):
-                if len(direct_reachability) > 0:
-                    # Get the earliest relevant timestamp
-                    vertex_lower_limit = min([current_time] + vertex_timestamps) - self._omega
-                    # Prune the reachability set
-                    direct_reachability.trim_before(vertex_lower_limit)
-                # Check (afterward) if the reverse reachability set is empty
-                if len(direct_reachability) == 0:
-                    del self._reverse_reachability[vertex]
+            reverse_reachability = self._reverse_reachability[vertex]
+            if len(reverse_reachability) > 0:
+                # Get the earliest relevant timestamp
+                # Prune the reachability set
+                reverse_reachability.trim_before(lower_limit)
+            # Check (afterward) if the reverse reachability set is empty
+            if len(reverse_reachability) == 0:
+                del self._reverse_reachability[vertex]
 
     # def wait(self) -> None:
     #     """
