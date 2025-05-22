@@ -104,6 +104,7 @@ class GraphCycleIterator:
         return self._get_memory_usage() > self._max_bytes
 
     def cleanup(self, current_time: Timestamp) -> None:
+        print(f"Memory usage: {self._get_memory_usage() / 1024**2:.2f} MB")
         self._seed_generator.cleanup(current_time=current_time)
         self._seed_explorer.cleanup()
 

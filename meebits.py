@@ -1,25 +1,18 @@
 import csv
 import json
-import os
 import argparse
 from datetime import date
 from decimal import Decimal
-from multiprocessing import freeze_support
 from pathlib import Path
-
-from networkx.readwrite import json_graph
 
 from input.iterator import GraphEdgeIterator
 from dscent.iterator import GraphCycleIterator
-import networkx as nx
 from networkx.readwrite.json_graph import node_link_data
-from tqdm import tqdm
-import pickle
 
 _DEFAULT_START_DATE = "2021-10-01"
 # -----
-# _DEFAULT_END_DATE = "2021-10-01"
-_DEFAULT_END_DATE = "2021-11-01"
+_DEFAULT_END_DATE = "2021-10-01"
+# _DEFAULT_END_DATE = "2021-11-01"
 # _DEFAULT_END_DATE = "2022-07-01"
 # -----
 _BUFFERED_FILES_COUNT = 2
