@@ -79,7 +79,7 @@ def main(
                 garbage_collection_max=gc_max,
                 logging_interval=log_interval,
                 # log_stream=memory_log_stream,
-                # yield_seeds=True,
+                yield_seeds=True,
                 progress_bar=progress_bar,
         ):
             cycles_csv_writer.writerow([
