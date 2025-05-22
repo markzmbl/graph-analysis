@@ -111,6 +111,7 @@ def main(
                 json.dumps(list(seed.candidates)),
                 json.dumps(serialize_graph_data(bundled_cycle_graph)),
             ])
+            print(seed.interval)
             cycles_log_stream.flush()
 
     # with open("meebits.pickle", "wb") as f:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from concurrent.futures import Future, wait
 from concurrent.futures.thread import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -11,7 +12,7 @@ from networkx.classes import MultiDiGraph
 from dscent.graph import ExplorationGraph, TransactionGraph, BundledCycle
 from dscent.locked_dict import LockedDefaultDict
 from dscent.reachability import DirectReachability
-from dscent.types_ import Vertex, Timestamp, Interval, Timedelta, TargetInteraction, PointVertices
+from dscent.types_ import Vertex, Timestamp, Interval, Timedelta, TargetInteraction, PointVertices, TransactionBlock
 
 
 class Candidates(set[Vertex]):
@@ -107,45 +108,23 @@ class Seed:
 
 
 class SeedGenerator:
-    def __init__(self, omega: Timedelta, thread_pool: ThreadPoolExecutor | None = None):
+    def __init__(self, omega: Timedelta, thread_pool: ThreadPoolExecutor):
         # Maximum timestamp window for relevant edges
         self._omega: Timedelta = omega
         # Thread pool for concurrent execution
-        self._thread_pool: ThreadPoolExecutor | None = thread_pool
+        self._thread_pool: ThreadPoolExecutor = thread_pool
         # Reverse reachability mapping: root -> sorted set of (_lower_limit, predecessor) pairs
-        self._reverse_reachability: LockedDefaultDict[Vertex, DirectReachability] = (
-            LockedDefaultDict(DirectReachability)
+        self._reverse_reachability: defaultdict[Vertex, DirectReachability] = (
+            defaultdict(DirectReachability)
         )
         # Interval tracking for candidate cycles: root -> IntervalTree
-        self._root_interval_trees: LockedDefaultDict[Vertex, RootIntervalTree] = (
-            LockedDefaultDict(RootIntervalTree)
+        self._root_interval_trees: defaultdict[Vertex, RootIntervalTree] = (
+            defaultdict(RootIntervalTree)
         )
-        self.vertex_timestamps: LockedDefaultDict[Vertex, list[Timestamp]] = LockedDefaultDict(list)
-        self._running_tasks: set[Future[None]] = set()
 
-    def _clear_task(self, vertices: list[Vertex], timestamp: Timestamp) -> None:
-        """
-        Clears the task registry for all running tasks.
-        This method is thread-safe and can be called concurrently.
-        """
-        for vertex in vertices:
-            with self.vertex_timestamps.access(vertex) as vertex_timestamps:
-                vertex_timestamps.remove(timestamp)
-                if len(vertex_timestamps) == 0:
-                    del self.vertex_timestamps[vertex]
-
-    def _get_vertex_time(self, vertex: Vertex) -> Timestamp:
-        """
-        Retrieves the current timestamp for a given vertex.
-        This method is thread-safe and can be called concurrently.
-
-        :param vertex: The vertex whose timestamp is to be retrieved.
-        :return: The current timestamp for the vertex, or None if not available.
-        """
-        with self.vertex_timestamps.access(vertex) as vertex_timestamps:
-            return min(vertex_timestamps)
-
-    def _seed_generation_task(self, target_interaction: TargetInteraction) -> None:
+    def _process_target_interaction(
+            self, target_interaction: TargetInteraction
+    ) -> dict[tuple[Vertex, slice], Candidates]:
         """
         Updates reverse reachability and root interval tree
         when a new edge (u -> v) arrives at `current_timestamp`.
@@ -157,97 +136,92 @@ class SeedGenerator:
         target = target_interaction.target
         sources = target_interaction.sources
         block_timestamp = target_interaction.timestamp
-        lower_limit = block_timestamp - self._omega
-        with self._reverse_reachability.access(target) as target_reverse_reachability:
-            # Add reachability entry
-            # S(b) ← S(b) ∪ {(a, t)}
-            target_reverse_reachability.add(PointVertices(vertices=sources, timestamp=block_timestamp))
-            # S(b) ← S(b)\{(x, tx) ∈ S(b) | tx ≤ t−ω}
-            trimmed_target_reverse_reachability = target_reverse_reachability.get_trimmed_before(lower_limit)
+        target_reverse_reachability = self._reverse_reachability[target]
 
         # Output dict to indicate if new seeds are added
-        new_seeds: dict[slice, Candidates] = {}
+        new_seeds = {}
         for source in sources:
             if source not in self._reverse_reachability:
                 continue
             # if S(a) exists then
-            with self._reverse_reachability.access(source) as source_reverse_reachability:
-                # Prune old entries for relevant edges
-                # S(a) ← S(a)\{(x,tx) ∈ S(a) | tx ≤ t−ω}
-                trimmed_source_reverse_reachability = source_reverse_reachability.get_trimmed_before(lower_limit)
+            source_reverse_reachability = self._reverse_reachability[source]
 
-            if len(trimmed_source_reverse_reachability) == 0:
-                del self._reverse_reachability[source]
-                continue
-
-            # Propagate reachability
-            # S(b) ← S(b) ∪ S(a)
-            trimmed_target_reverse_reachability |= trimmed_source_reverse_reachability
             # for (b, tb) ∈ S(b) do
-            cyclic_reachability = DirectReachability([
-                v for v in trimmed_target_reverse_reachability
+            cyclic_reachability = DirectReachability(
+                v for v in target_reverse_reachability
                 if v.vertex == target and v.timestamp < block_timestamp
-            ])
+            )
             # {c ∈ S(a), tc > tb}
             for cyclic_reachable in cyclic_reachability:
                 # C ← {c | (c,tc) ∈ S(a),tc > tb} ∪ {a}
-                candidate_reachability = DirectReachability(trimmed_source_reverse_reachability)
+                candidate_reachability = DirectReachability(source_reverse_reachability)
                 candidates = Candidates([source])
                 candidates.update(c.vertex for c in candidate_reachability)
                 if len(candidates) > 1:
                     # Output (b, [tb, t], C)
                     seed_range = slice(cyclic_reachable.timestamp, block_timestamp)
-                    new_seeds[seed_range] = candidates
-
-            source_time = self._get_vertex_time(vertex=source)
-            with self._reverse_reachability.access(source) as source_reverse_reachability:
-                # trim source reachability
-                source_reverse_reachability.trim_before(lower_limit=source_time)
+                    new_seeds[(target, seed_range)] = candidates
 
         # Remove to avoid duplicate output
         # S(b) ← S(b) \ {(b, tb)}
-        # And trim the reachability set
-        target_time = self._get_vertex_time(vertex=target)
-        with self._reverse_reachability.access(target):
-            self._reverse_reachability[target] = DirectReachability(
-                reverse_reachable
-                for reverse_reachable in trimmed_target_reverse_reachability
-                if reverse_reachable.vertex != target and reverse_reachable.timestamp >= target_time
-            )
+        self._reverse_reachability[target] = DirectReachability(
+            reverse_reachable
+            for reverse_reachable in target_reverse_reachability
+            if reverse_reachable.vertex != target
+        )
+        return new_seeds
 
-        # Exit the reverse reachability locks and consider new seeds in target root interval tree
-        if new_seeds:
-            # New candidate seeds are present
-            with self._root_interval_trees.access(target) as root_interval_tree:  # Enter root interval tree lock
-                for seed_range, candidates in new_seeds.items():
-                    # Add new seeds
-                    root_interval_tree[seed_range] = candidates
-                # Merges adjacent or overlapping intervals for root `v` within the allowed timestamp window.
-                if len(root_interval_tree) > 1:
-                    root_interval_tree.merge_enclosed(self._omega)
+    def process_batch(self, batch: TransactionBlock) -> None:
+        vertices = set()
+        for target, sources in batch.items():
+            # Keep set of all interacting vertices
+            vertices.add(target)
+            vertices.update(sources)
+            # Add reachability entry
+            # S(b) ← S(b) ∪ {(a, t)}
+            self._reverse_reachability[target].add(PointVertices(vertices=sources, timestamp=batch.timestamp))
 
-    def submit(self, interaction: TargetInteraction) -> None:
-        """
-        Submits a new target interaction for processing.
-        This method is thread-safe and can be called concurrently.
-
-        :param target_interaction: A named tuple containing the target vertex, source vertices, and timestamp.
-        """
-        timestamp = interaction.timestamp
-        vertices = [interaction.target] + interaction.sources
-        # and add the task to the running task registry.
+        lower_limit = batch.timestamp - self._omega
         for vertex in vertices:
-            with self.vertex_timestamps.access(vertex) as vertex_timestamps:
-                # Add the timestamp to the list of running tasks for the vertex
-                vertex_timestamps.append(timestamp)
-        # Submit the seed generation task to the thread pool
-        if self._thread_pool is not None:
-            future = self._thread_pool.submit(self._seed_generation_task, interaction)
-        else:
-            future = Future()
-            future.set_result(self._seed_generation_task(interaction))
-        future.add_done_callback(lambda _: self._clear_task(vertices, timestamp))
-        self._running_tasks.add(future)
+            # If a reverse reachability for an interacting vertex exists
+            # if vertex in self._reverse_reachability:
+            reachability = self._reverse_reachability[vertex]
+            # It shall be pruned and trimmed before the lower limit
+            # S(v) ← S(v)\{(x, tx) ∈ S(v) | tx ≤ t−ω}
+            reachability.trim_before(lower_limit)
+            if len(reachability) == 0:
+                # If the end result is ∅, the vertex key shall be deleted
+                del self._reverse_reachability[vertex]
+
+        # Create a copy of target reachabilites at block timestamp
+        new_target_reachabilities = {}
+        for target, sources in batch.items():
+            if target in self._reverse_reachability:
+                new_target_reachabilities[target] = self._reverse_reachability[target]
+                for source in sources:
+                    if source in self._reverse_reachability:
+                        # Propagate reachability
+                        # S(b) ← S(b) ∪ S(a)
+                        new_target_reachabilities[target] |= self._reverse_reachability[source]
+        # Update the target reachabilities
+        for target, reverse_reachability in new_target_reachabilities.items():
+            self._reverse_reachability[target] = reverse_reachability
+
+        target_interactions = [
+            TargetInteraction(target=target, sources=sources, timestamp=batch.timestamp)
+            for target, sources in batch.items()
+        ]
+        all_new_seeds = {}
+        for new_seeds in self._thread_pool.map(self._process_target_interaction, target_interactions):
+            all_new_seeds.update(new_seeds)
+
+        for (target, seed_range), candidates in all_new_seeds.items():
+            root_interval_tree = self._root_interval_trees[target]
+            # Add new seeds
+            root_interval_tree[seed_range] = candidates
+            # Merges adjacent or overlapping intervals for root `v` within the allowed timestamp window.
+            if len(root_interval_tree) > 1:
+                root_interval_tree.merge_enclosed(self._omega)
 
     def pop_primed_seeds(self, upper_limit: Timestamp | None = None) -> list[Seed]:
         """
@@ -260,32 +234,33 @@ class SeedGenerator:
         primed_seeds: list[Seed] = []
         # Iterate over each root and its associated interval tree
         for root in list(self._root_interval_trees.keys()):
-            with self._root_interval_trees.access(root) as interval_tree:
-                # Check if the interval tree contains intervals starting before or at the cutoff time
-                primed_intervals = []
-                all_intervals = False
-                # There is no upper limit, collect all intervals of all interval trees
-                if upper_limit is None:
-                    primed_intervals = list(interval_tree)
-                    all_intervals = True
-                # Interval tree lies before upper limit, collect whole interval tree
-                elif interval_tree.end() <= upper_limit:
-                    primed_intervals = list(interval_tree)
-                    all_intervals = True
-                # Upper Limit lies within the interval tree, collect envelope of interval tree
-                elif interval_tree.begin() < upper_limit <= interval_tree.end():
-                    primed_intervals = interval_tree.envelop(begin=interval_tree.begin(), end=upper_limit)
-                # Convert each qualifying interval into a Seed object and collect them
-                for primed_interval in primed_intervals:
-                    primed_seeds.append(Seed.construct(root=root, data_interval=primed_interval))
-                    if not all_intervals:
-                        interval_tree.remove(primed_interval)
-                # If all intervals have been processed, clear the entire tree
-                if all_intervals:
-                    interval_tree.clear()
-                # Remove the root from the tree dictionary if its interval tree is now empty
-                if len(interval_tree) == 0:
-                    del self._root_interval_trees[root]
+            interval_tree = self._root_interval_trees[root]
+            # with self._root_interval_trees.access(root) as interval_tree:
+            # Check if the interval tree contains intervals starting before or at the cutoff time
+            primed_intervals = []
+            all_intervals = False
+            # There is no upper limit, collect all intervals of all interval trees
+            if upper_limit is None:
+                primed_intervals = list(interval_tree)
+                all_intervals = True
+            # Interval tree lies before upper limit, collect whole interval tree
+            elif interval_tree.end() <= upper_limit:
+                primed_intervals = list(interval_tree)
+                all_intervals = True
+            # Upper Limit lies within the interval tree, collect envelope of interval tree
+            elif interval_tree.begin() < upper_limit <= interval_tree.end():
+                primed_intervals = interval_tree.envelop(begin=interval_tree.begin(), end=upper_limit)
+            # Convert each qualifying interval into a Seed object and collect them
+            for primed_interval in primed_intervals:
+                primed_seeds.append(Seed.construct(root=root, data_interval=primed_interval))
+                if not all_intervals:
+                    interval_tree.remove(primed_interval)
+            # If all intervals have been processed, clear the entire tree
+            if all_intervals:
+                interval_tree.clear()
+            # Remove the root from the tree dictionary if its interval tree is now empty
+            if len(interval_tree) == 0:
+                del self._root_interval_trees[root]
         # Return the list of gathered seeds
         return primed_seeds
 
@@ -304,11 +279,11 @@ class SeedGenerator:
                 if len(direct_reachability) == 0:
                     del self._reverse_reachability[vertex]
 
-    def wait(self) -> None:
-        """
-        Wait for all running tasks to complete.
-        """
-        wait(self._running_tasks)
+    # def wait(self) -> None:
+    #     """
+    #     Wait for all running tasks to complete.
+    #     """
+    #     wait(self._running_tasks)
 
     def cleanup(self, current_time: Timestamp):
         for task in list(self._running_tasks):

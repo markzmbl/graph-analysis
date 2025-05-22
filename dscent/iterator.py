@@ -66,9 +66,7 @@ class GraphCycleIterator:
         self._iteration_count: int = 0  # Track number of processed edges
 
         # Parallel setup
-        self._thread_pool = (
-            BoundedThreadPoolExecutor(max_workers=max_workers, queue_size=queue_size) if max_workers > 0 else None
-        )
+        self._thread_pool = ThreadPoolExecutor(max_workers=max_workers or 1)
         # Seed Generation
         self._seed_generator = SeedGenerator(omega=omega, thread_pool=self._thread_pool)
         # Seed Exploration
@@ -201,7 +199,7 @@ class GraphCycleIterator:
             # Check if the current time is different from the last processed time
             if current_time != transaction_block.timestamp:
                 # Process the current batch before moving on
-                self._process_batch(batch=transaction_block)
+                self._seed_generator.process_batch(batch=transaction_block)
                 # Reset batch and update batch_id
                 transaction_block = TransactionBlock(timestamp=current_time)
             # This always runs (either for old or new batch)
