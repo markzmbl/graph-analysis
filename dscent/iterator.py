@@ -230,8 +230,6 @@ class GraphCycleIterator:
                 if now - self._last_log_time > self._logging_interval:
                     self._log(log_time=now)
 
-        # Wait for final seed generation tasks to finish
-        self._seed_generator.wait()
         # Start final exploration tasks
         self._start_exploration_tasks(upper_limit=None)
         # Wait for final exploration tasks to finish
