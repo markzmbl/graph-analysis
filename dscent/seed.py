@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections import defaultdict
 from concurrent.futures import Future, wait
 from concurrent.futures.thread import ThreadPoolExecutor
@@ -108,11 +109,11 @@ class Seed:
 
 
 class SeedGenerator:
-    def __init__(self, omega: Timedelta, thread_pool: ThreadPoolExecutor):
+    def __init__(self, omega: Timedelta):
         # Maximum timestamp window for relevant edges
         self._omega: Timedelta = omega
         # Thread pool for concurrent execution
-        self._thread_pool: ThreadPoolExecutor = thread_pool
+        self._thread_pool: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=1024)
         # Reverse reachability mapping: root -> sorted set of (_lower_limit, predecessor) pairs
         self._reverse_reachability: defaultdict[Vertex, DirectReachability] = (
             defaultdict(DirectReachability)
@@ -287,11 +288,11 @@ class SeedGenerator:
 
 
 class SeedExplorer:
-    def __init__(self, omega: Timedelta, thread_pool: ThreadPoolExecutor | None = None):
+    def __init__(self, omega: Timedelta):
         # Maximum timestamp window for relevant edges
         self._omega: Timedelta = omega
         # Thread pool for concurrent execution
-        self._thread_pool: ThreadPoolExecutor | None = thread_pool
+        self._thread_pool: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=os.cpu_count() // 2)
         # Dynamic directed sub_graph
         self._transaction_graph = TransactionGraph()
         self._running_tasks: dict[Seed, Future[list[BundledCycle]]] = {}

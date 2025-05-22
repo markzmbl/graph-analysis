@@ -44,10 +44,7 @@ class GraphCycleIterator:
             self,
             interactions: Iterator[EdgeInteraction],
             omega: Timedelta = 10,
-            max_workers: int = 6,
-            queue_size: int = 10_000,
             garbage_collection_max: int | str = "32G",
-            garbage_collection_cooldown: int = 10_000_000,
             log_stream: io.StringIO | TextIO | None = None,
             logging_interval: int = 60,
             yield_seeds: bool = False,
@@ -65,12 +62,10 @@ class GraphCycleIterator:
         self._interactions = interactions
         self._iteration_count: int = 0  # Track number of processed edges
 
-        # Parallel setup
-        self._thread_pool = ThreadPoolExecutor(max_workers=max_workers or 1)
         # Seed Generation
-        self._seed_generator = SeedGenerator(omega=omega, thread_pool=self._thread_pool)
+        self._seed_generator = SeedGenerator(omega=omega)
         # Seed Exploration
-        self._seed_explorer = SeedExplorer(omega=omega, thread_pool=self._thread_pool)
+        self._seed_explorer = SeedExplorer(omega=omega)
 
         # Time Threshold
         self._omega = omega
@@ -78,8 +73,6 @@ class GraphCycleIterator:
         # Memory Monitoring
         self._process = psutil.Process()
         self._max_bytes = parse_size(garbage_collection_max)  # max bytes for pruning old data
-        self._last_cleaned = float("-inf")
-        self._cleanup_cooldown = garbage_collection_cooldown
 
         # Logging
         # Seeds
@@ -110,17 +103,9 @@ class GraphCycleIterator:
         """
         return self._get_memory_usage() > self._max_bytes
 
-    def _cleanup_cooled_down(self) -> bool:
-        """
-        Check if the cleanup cooldown period has passed.
-        :return: True if cooldown period has passed, False otherwise.
-        """
-        return self._iteration_count > self._last_cleaned + self._cleanup_cooldown
-
     def cleanup(self, current_time: Timestamp) -> None:
         self._seed_generator.cleanup(current_time=current_time)
         self._seed_explorer.cleanup()
-        self._last_cleaned = self._iteration_count
 
     def _get_log_line(
             self,
@@ -215,11 +200,10 @@ class GraphCycleIterator:
             # --- Memory Management ---
 
             # Check if memory is exceeded
-            if self._memory_limit_exceeded() and self._cleanup_cooled_down():
+            if self._memory_limit_exceeded():
                 # Cleanup Memory
                 self.cleanup(current_time=current_time)
-                # TODO: max memory is really the hard limit
-                if self._memory_limit_exceeded():
+                if self._memory_limit_exceeded():  # Check again after cleanup
                     raise MemoryError("Out of memory.")
 
             # --- Logging ---
@@ -236,6 +220,3 @@ class GraphCycleIterator:
         self._seed_explorer.wait()
         # Yield final found cycles
         yield from self._explored_cycles()
-        # Shutdown Pool
-        if self._thread_pool is not None:
-            self._thread_pool.shutdown(wait=True)

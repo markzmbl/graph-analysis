@@ -12,10 +12,7 @@ OMEGA_VALUES=(10 25 50 100 30 40 60 70 80 20 150 200 300 250 400 500 350 450 100
 BUFFER=10
 START_DATE="2021-10-01"
 END_DATE="2022-07-01"
-WORKERS=500
-TASK_QUEUE=5000000
 GC_MAX="250GB"
-GC_COOLDOWN=1000000
 LOG_INTERVAL=60
 LOG_PREFIX="may-run"
 LOG_DIR="/export/share/markusz33dm/logs/"
@@ -43,10 +40,7 @@ do
     --end_date "$END_DATE" \
     --buffer "$BUFFER" \
     --omega "$omega" \
-    --workers "$WORKERS" \
-    --task_queue "$TASK_QUEUE" \
     --gc_max "$GC_MAX" \
-    --gc_cooldown "$GC_COOLDOWN" \
     --log_interval "$LOG_INTERVAL" \
     --log_prefix "$LOG_PREFIX-omega$omega_padded" \
     --log_dir "$LOG_DIR" \
