@@ -286,9 +286,6 @@ class SeedGenerator:
     #     wait(self._running_tasks)
 
     def cleanup(self, current_time: Timestamp):
-        for task in list(self._running_tasks):
-            if task.done():
-                self._running_tasks.remove(task)
         self._prune_reverse_reachability(current_time=current_time)
 
 
