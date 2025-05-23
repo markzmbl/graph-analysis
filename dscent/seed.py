@@ -128,7 +128,7 @@ class SeedGenerator:
 
     def _prune_reverse_reachability(self, vertex: Vertex, lower_limit: Timedelta) -> None:
         # If a reverse reachability for an interacting vertex exists
-        if vertex in self._reverse_reachability:
+        if vertex in self._reverse_reachability.keys():
             reverse_reachability = self._reverse_reachability[vertex]
             if len(reverse_reachability) > 0:
                 # It shall be pruned and trimmed before the lower limit
