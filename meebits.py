@@ -64,10 +64,10 @@ def main(
     # g = nx.MultiDiGraph()
 
     log_directory = Path(log_directory)
-    # memory_log_path = log_directory / f"{log_prefix}_memory.csv"
+    memory_log_path = log_directory / f"{log_prefix}_memory.csv"
     cycles_log_path = log_directory / f"{log_prefix}_cycles.csv"
     with(
-        # memory_log_path.open("w") as memory_log_stream,
+        memory_log_path.open("w") as memory_log_stream,
         cycles_log_path.open("w") as cycles_log_stream,
     ):
         cycles_csv_writer = csv.writer(cycles_log_stream, delimiter=';')
@@ -78,7 +78,7 @@ def main(
                 omega=omega,
                 garbage_collection_max=gc_max,
                 logging_interval=log_interval,
-                # log_stream=memory_log_stream,
+                log_stream=memory_log_stream,
                 yield_seeds=True,
                 progress_bar=progress_bar,
         ):
