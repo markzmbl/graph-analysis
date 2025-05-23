@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import heapq
 from collections.abc import Iterator
 from typing import Iterable
 
@@ -138,6 +139,37 @@ class DirectReachability:
         self.clear()
         self.extend(merged)
         return self
+
+    @staticmethod
+    def union(*args: DirectReachability) -> DirectReachability:
+        """Perform union like set.union: can be called on instance or class."""
+        import heapq
+
+        if not args:
+            return DirectReachability()
+
+        result = DirectReachability()
+        heap = []
+        last_added = None
+
+        # Initialize the heap with the first element of each input, along with list and index info
+        for list_index, direct_reachability in enumerate(args):
+            if direct_reachability:
+                heapq.heappush(heap, (direct_reachability[0], list_index, 0))
+
+        while heap:
+            point_vertex, list_index, item_index = heapq.heappop(heap)
+
+            if point_vertex != last_added:
+                result.add(point_vertex)
+                last_added = point_vertex
+
+            # Push the next element from the same input list
+            next_index = item_index + 1
+            if next_index < len(args[list_index]):
+                heapq.heappush(heap, (args[list_index][next_index], list_index, next_index))
+
+        return result
 
     def __repr__(self) -> str:
         return repr(list(iter(self)))

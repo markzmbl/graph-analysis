@@ -4,16 +4,16 @@
 #set -e
 
 # Activate the conda environment
-source ~/.bashrc
-conda activate py313
+#source ~/.bashrc
+#conda activate py313
 
 # Benchmark configuration
 OMEGA=25
 BUFFER=10
 START_DATE="2021-10-01"
-END_DATE="2021-10-7"
+END_DATE="2021-10-01"
 TASK_QUEUE=5000000
-GC_MAX="6GB"
+GC_MAX="32GB"
 GC_COOLDOWN=1000000
 PROGRESS=false
 
@@ -22,7 +22,7 @@ RESULTS_FILE="benchmark_results.csv"
 echo "workers,execution_time_sec" > "$RESULTS_FILE"
 
 # Define worker values to test
-WORKERS_LIST=(2 1 0 4 8 16 32 64 128 256 512 1024)
+WORKERS_LIST=(1 2 4 8 16 32 64 128 256 512 1024)
 
 # Run benchmarks for each worker setting
 for workers in "${WORKERS_LIST[@]}"
@@ -31,7 +31,7 @@ do
 
   start_time=$(date +%s.%N)
 
-  PYTHON_GIL=0 python3.13t -O meebits.py \
+  PYTHON_GIL=0 .venv313t/bin/python3.13 -O meebits.py \
     --start_date "$START_DATE" \
     --end_date "$END_DATE" \
     --buffer "$BUFFER" \
