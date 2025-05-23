@@ -140,7 +140,7 @@ class SeedGenerator:
 
     def _prune_reverse_reachabilities(self, current_time: Timestamp) -> None:
         lower_limit = current_time - self._omega
-        for vertex in list(self._reverse_reachability.keys()):
+        for vertex in self._reverse_reachability.keys():
             self._prune_reverse_reachability(vertex=vertex, lower_limit=lower_limit)
 
     def _process_target_interaction(
@@ -238,18 +238,17 @@ class SeedGenerator:
         # Initialize a list to store primed seeds
         primed_seeds: list[Seed] = []
         # Iterate over each root and its associated interval tree
-        for root in list(self._root_interval_trees.keys()):
+        to_delete = []
+        for root in self._root_interval_trees.keys():
             interval_tree = self._root_interval_trees[root]
             # with self._root_interval_trees.access(root) as interval_tree:
             # Check if the interval tree contains intervals starting before or at the cutoff time
             primed_intervals = []
             all_intervals = False
             # There is no upper limit, collect all intervals of all interval trees
-            if upper_limit is None:
-                primed_intervals = list(interval_tree)
-                all_intervals = True
+            # or
             # Interval tree lies before upper limit, collect whole interval tree
-            elif interval_tree.end() <= upper_limit:
+            if upper_limit is None or interval_tree.end() <= upper_limit:
                 primed_intervals = list(interval_tree)
                 all_intervals = True
             # Upper Limit lies within the interval tree, collect envelope of interval tree
@@ -263,9 +262,12 @@ class SeedGenerator:
             # If all intervals have been processed, clear the entire tree
             if all_intervals:
                 interval_tree.clear()
-            # Remove the root from the tree dictionary if its interval tree is now empty
+            # If the interval tree is empty after processing, mark the root for deletion
             if len(interval_tree) == 0:
-                del self._root_interval_trees[root]
+                to_delete.append(root)
+        # Remove the root from the tree dictionary if its interval tree is now empty
+        for root in to_delete:
+            del self._root_interval_trees[root]
         # Return the list of gathered seeds
         return primed_seeds
 
@@ -339,12 +341,15 @@ class SeedExplorer:
         :return: A list of seeds that have been explored.
         """
         detected_graphs = {}
-        for seed, future in list(self._running_tasks.items()):
+        for seed, future in self._running_tasks.items():
             if future.done():
                 cycle_graphs = future.result()
                 detected_graphs[seed] = cycle_graphs
-                del self._running_tasks[seed]
-                self._explored_seeds.add(seed)
+        # Remove completed tasks from the running tasks
+        for seed in detected_graphs.keys():
+            self._explored_seeds.add(seed)
+            del self._running_tasks[seed]
+
         if include_seeds:
             return detected_graphs
         else:

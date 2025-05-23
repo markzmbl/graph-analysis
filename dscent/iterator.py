@@ -188,24 +188,25 @@ class GraphCycleIterator:
                 self._seed_generator.process_batch(batch=transaction_block)
                 # Reset batch and update batch_id
                 transaction_block = TransactionBlock(timestamp=current_time)
+
+                # --- Seed Exploration ---
+
+                # Start exploration tasks for primed seeds
+                self._start_exploration_tasks(upper_limit=current_time - self._omega)
+                # Yield results from finished explorations
+                yield from self._explored_cycles()
+
+                # --- Memory Management ---
+
+                # Check if memory is exceeded
+                if self._memory_limit_exceeded():
+                    # Cleanup Memory
+                    self.cleanup(current_time=current_time)
+                    if self._memory_limit_exceeded():  # Check again after cleanup
+                        raise MemoryError("Out of memory.")
+
             # This always runs (either for old or new batch)
             transaction_block[target].append(source)
-
-            # --- Seed Exploration ---
-
-            # Start exploration tasks for primed seeds
-            self._start_exploration_tasks(upper_limit=current_time - self._omega)
-            # Yield results from finished explorations
-            yield from self._explored_cycles()
-
-            # --- Memory Management ---
-
-            # Check if memory is exceeded
-            if self._memory_limit_exceeded():
-                # Cleanup Memory
-                self.cleanup(current_time=current_time)
-                if self._memory_limit_exceeded():  # Check again after cleanup
-                    raise MemoryError("Out of memory.")
 
             # --- Logging ---
 
