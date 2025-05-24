@@ -113,11 +113,15 @@ class GraphCycleIterator:
             header=False
     ) -> list[str | float]:
         current_time = time.monotonic()
+        exploration_tasks = self._seed_explorer.get_running_tasks()
+        running = sum(task.done() for task in exploration_tasks.values())
         fields = {
             "time_seconds": current_time,
             "iterations_total": self._iteration_count,
             "iterations_rate": self._iteration_count / (current_time - self._start_time),
             "memory_usage_bytes": self._get_memory_usage(),
+            "task_queue_size": len(exploration_tasks),
+            "running_tasks": running,
         }
         if header:
             return list(fields.keys())

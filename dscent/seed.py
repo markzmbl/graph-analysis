@@ -140,7 +140,7 @@ class SeedGenerator:
 
     def _prune_reverse_reachabilities(self, current_time: Timestamp) -> None:
         lower_limit = current_time - self._omega
-        for vertex in self._reverse_reachability.keys():
+        for vertex in list(self._reverse_reachability.keys()):
             self._prune_reverse_reachability(vertex=vertex, lower_limit=lower_limit)
 
     def _process_target_interaction(
@@ -387,3 +387,6 @@ class SeedExplorer:
 
     def cleanup(self):
         self._prune_transaction_graph()
+
+    def get_running_tasks(self):
+        return dict(self._running_tasks)
