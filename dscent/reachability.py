@@ -180,7 +180,7 @@ class SequentialReachability(list[SeriesVertex]):
         return reversed(list(zip(self[:-1], self[1:])))
 
     def append(self, item: SeriesVertex):
-        if len(self) > 0 and item.begin() < (head := self[-1]).begin():
+        if len(self) > 0 and item.begin() <= (head := self[-1]).begin():
             # Copy and Trim
             item = SeriesVertex(
                 vertex=item.vertex,
@@ -193,7 +193,7 @@ class SequentialReachability(list[SeriesVertex]):
         super().append(item)
         for predecessor_index, (predecessor, successor) in enumerate(self.reverse_pairs()):
             # Check if predecessor timestamps need trimming
-            if predecessor.end() > successor.end():
+            if predecessor.end() >= successor.end():
                 # Copy and trim
                 trimmed_time_sequence = get_trimmed_after(predecessor.timestamps, successor.end(), strict=True)
                 self[predecessor_index] = SeriesVertex(
