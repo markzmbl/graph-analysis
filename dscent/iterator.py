@@ -9,6 +9,7 @@ from threading import Semaphore
 from time import monotonic
 from typing import TextIO
 
+import humanfriendly
 import psutil
 from humanfriendly import parse_size
 from tqdm import tqdm
@@ -104,9 +105,13 @@ class GraphCycleIterator:
         return self._get_memory_usage() > self._max_bytes
 
     def cleanup(self, current_time: Timestamp) -> None:
-        print(f"Memory usage: {self._get_memory_usage() / 1024**2:.2f} MB")
+        before = self._get_memory_usage()
         self._seed_generator.cleanup(current_time=current_time)
         self._seed_explorer.cleanup()
+        print(
+            f"Memory cleanup: {humanfriendly.format_size(before)} -> "
+            f"{humanfriendly.format_size(self._get_memory_usage())}"
+        )
 
     def _get_log_line(
             self,
