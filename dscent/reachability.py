@@ -196,6 +196,8 @@ class SequentialReachability(list[SeriesVertex]):
             if predecessor.end() >= successor.end():
                 # Copy and trim
                 trimmed_time_sequence = get_trimmed_after(predecessor.timestamps, successor.end(), strict=True)
+                if len(trimmed_time_sequence) == 0:
+                    raise ValueError
                 self[predecessor_index] = SeriesVertex(
                     vertex=predecessor.vertex,
                     timestamps=trimmed_time_sequence
