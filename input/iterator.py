@@ -246,7 +246,7 @@ class GraphEdgeIterator:
             start_date: date | str | None = None,
             end_date: date | str | None = None,
             buffer_count: int = 2,
-            max_threads: int = 1024
+            max_threads: int = 128,
     ):
         # Prepare an iterator of file paths (_transaction_graph files) within the date range
         self.start_date = start_date
