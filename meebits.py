@@ -71,7 +71,8 @@ def main(
         cycles_log_path.open("w") as cycles_log_stream,
     ):
         cycles_csv_writer = csv.writer(cycles_log_stream, delimiter=';')
-        interactions = GraphEdgeIterator(start_date=start_date, end_date=end_date, buffer_count=buffered_files_count)
+        # interactions = GraphEdgeIterator(start_date=start_date, end_date=end_date, buffer_count=buffered_files_count)
+        interactions = GraphEdgeIterator(buffer_count=buffered_files_count)
         cycles_csv_writer.writerow(["seed_begin", "seed_end", "next_seed_begin", "candidates", "bundled_cycle"])
         for seed, bundled_cycle_graph in GraphCycleIterator(
                 interactions,

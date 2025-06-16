@@ -126,7 +126,7 @@ class SeedGenerator:
             defaultdict(RootIntervalTree)
         )
 
-    def _prune_reverse_reachability(self, vertex: Vertex, lower_limit: Timedelta) -> None:
+    def _prune_reverse_reachability(self, vertex: Vertex, lower_limit: Timestamp) -> None:
         # If a reverse reachability for an interacting vertex exists
         if vertex in self._reverse_reachability.keys():
             reverse_reachability = self._reverse_reachability[vertex]
@@ -358,10 +358,10 @@ class SeedExplorer:
                 for graph in cycle_graphs
             ]
 
-    def _prune_transaction_graph(self):
+    def _prune_transaction_graph(self, current_time: Timestamp):
         # If there are any primed seeds or running tasks, determine the minimum data_interval begin
         # Keep Track of minimum needed Graph interactions
-        thresholds = []
+        thresholds = [current_time - self._omega]
         # From finished tasks take the latest begin
         if len(self._explored_seeds) > 0:
             thresholds.append(max(seed.interval.begin for seed in self._explored_seeds))
@@ -385,8 +385,8 @@ class SeedExplorer:
         """
         wait(self._running_tasks.values())
 
-    def cleanup(self):
-        self._prune_transaction_graph()
+    def cleanup(self, current_time: Timestamp) -> None:
+        self._prune_transaction_graph(current_time=current_time)
 
     def get_running_tasks(self):
         return dict(self._running_tasks)

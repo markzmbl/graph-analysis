@@ -84,6 +84,7 @@ class TransactionGraph(nx.MultiDiGraph):
 
     def prune(self, lower_time_limit: Timestamp):
         self.remove_edges_from(list(self.time_slice(end=lower_time_limit).edges(keys=True)))
+        self.remove_nodes_from(list(nx.isolates(self)))
 
 
 class _ClosureManager(DefaultDict[Vertex, Timestamp]):

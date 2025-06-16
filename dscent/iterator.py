@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
+import sys
 import time
 from collections.abc import Iterator, Generator
 from concurrent.futures import ThreadPoolExecutor
@@ -144,18 +145,6 @@ class GraphCycleIterator:
         log_line = self._get_log_line()
         self._csv_writer.writerow(log_line)
         self._last_log_time = log_time
-
-    def _process_batch(self, batch: TransactionBlock):
-        block_timestamp = batch.timestamp
-        for target, sources in batch.items():
-            # Construct interaction to single target from multiple sources
-            target_interaction = TargetInteraction(
-                target=target,
-                sources=sources,
-                timestamp=block_timestamp,
-            )
-            # Submit Seed Generation Task
-            self._seed_generator.submit(interaction=target_interaction)
 
     def _start_exploration_tasks(self, upper_limit: Timestamp | None = None):
         # Try to gather new exploration tasks
