@@ -7,6 +7,7 @@ import time
 from collections.abc import Iterator, Generator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
+from functools import partial
 from threading import Semaphore
 from time import monotonic
 from typing import TextIO
@@ -47,6 +48,7 @@ class GraphCycleIterator:
     def __init__(
             self,
             interactions: Iterator[EdgeInteraction],
+            total: int | None = None,
             omega: Timedelta = 10,
             garbage_collection_max: int | str = "32G",
             log_stream: io.StringIO | TextIO | None = None,
@@ -61,9 +63,14 @@ class GraphCycleIterator:
         # General
         self._use_tqdm = progress_bar
         if self._use_tqdm:
-            interactions = tqdm(interactions, unit_scale=True, smoothing=1, position=0)
+            interactions = tqdm(
+                interactions,
+                total=total or getattr(interactions, "__len__", None),
+                unit_scale=True, smoothing=1, position=0
+            )
         self._interactions = interactions
         self._iteration_count: int = 0  # Track number of processed edges
+        self._cycles_yielded: int = 0  # Track number of processed cycles
 
         # Time Threshold
         if isinstance(omega, timedelta):
@@ -115,7 +122,7 @@ class GraphCycleIterator:
     def cleanup(self, current_time: Timestamp) -> None:
         before = self._get_memory_usage()
         self._seed_generator.cleanup(current_time=current_time)
-        self._seed_explorer.cleanup()
+        self._seed_explorer.cleanup(current_time=current_time)
         print(
             f"Memory cleanup: {humanfriendly.format_size(before)} -> "
             f"{humanfriendly.format_size(self._get_memory_usage())}"
@@ -132,6 +139,8 @@ class GraphCycleIterator:
             "time_seconds": current_time,
             "iterations_total": self._iteration_count,
             "iterations_rate": self._iteration_count / (current_time - self._start_time),
+            "cycles_total": self._cycles_yielded,
+            "cycles_rate": self._iteration_count / (current_time - self._start_time),
             "memory_usage_bytes": self._get_memory_usage(),
             "task_queue_size": len(exploration_tasks),
             "running_tasks": running,
@@ -168,6 +177,7 @@ class GraphCycleIterator:
         else:
             for cycle in detected_cycles:
                 yield cycle  # Yield cycle graph
+        self._cycles_yielded += len(detected_cycles)
 
     def __iter__(self) -> Generator[TransactionGraph | tuple[Seed, TransactionGraph], None, None]:
         transaction_block: TransactionBlock | None = None  # Placeholder for the first transaction block
@@ -188,7 +198,7 @@ class GraphCycleIterator:
             if isinstance(edge_key, TransactionKey):
                 current_time = edge_key.timestamp
                 self._seed_explorer.add_transaction(source, target, timestamp=edge_key, edge_data=edge_data)
-            elif self._time_key is not None:
+            elif set(edge_data.keys()).intersection({"datetime", "timestamp"}):
                 current_time = get_timestamp_from_attributes(edge_data)
                 self._seed_explorer.add_transaction(source, target, timestamp=current_time, edge_data=edge_data)
             else:

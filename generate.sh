@@ -8,14 +8,11 @@ source ~/.bashrc
 conda activate py313
 
 # Benchmark configuration
-#OMEGA_VALUES=(10 20 25 30 40 50 60 70 80 90 100 150 200 300 250 400 500 350 450 1000)
 OMEGA_VALUES=(10 25 50)
 BUFFER=10
-START_DATE="2021-10-01"
-END_DATE="2022-06-30"
-GC_MAX="100GB"
+GC_MAX="64GB"
 LOG_INTERVAL=60
-LOG_PREFIX="may-run3"
+LOG_PREFIX="june-run"
 LOG_DIR="/export/share/markusz33dm/logs/"
 PROGRESS=true
 
@@ -36,9 +33,7 @@ do
 
   start_time=$(date +%s.%N)
 
-  PYTHON_GIL=0 python3.13t -O meebits.py \
-    --start_date "$START_DATE" \
-    --end_date "$END_DATE" \
+  PYTHON_GIL=0 python3.13t -O generate.py \
     --buffer "$BUFFER" \
     --omega "$omega" \
     --gc_max "$GC_MAX" \

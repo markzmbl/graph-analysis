@@ -6,6 +6,7 @@ from datetime import datetime, date
 from functools import cached_property
 from pathlib import Path
 import networkx as nx
+from tqdm import tqdm
 
 from dscent.types_ import EdgeInteraction
 
@@ -245,6 +246,7 @@ class GraphEdgeIterator:
             start_date: date | str | None = None,
             end_date: date | str | None = None,
             buffer_count: int = 2,
+            max_threads: int = 1024
     ):
         # Prepare an iterator of file paths (_transaction_graph files) within the date range
         self.start_date = start_date
@@ -252,6 +254,7 @@ class GraphEdgeIterator:
         self.graph_path_iterator = iter(get_graph_paths(start_date=self.start_date, end_date=self.end_date))
 
         self.buffer_count = buffer_count
+        self._max_threads = max_threads
         # Initialize a buffer (list) of size buffer_count for vertex_timestamps or None
         self.buffer = [None] * self.buffer_count
 
@@ -388,7 +391,17 @@ class GraphEdgeIterator:
 
     @cached_property
     def size(self):
-        return sum(1 for _ in self)
+        def count_edges(graph_path):
+            with graph_path.open("rb") as f:
+                graph = pickle.load(f)
+                return graph.number_of_edges()
 
-    # def __len__(self):
-    #     return self.size
+        graph_paths = list(get_graph_paths(start_date=self.start_date, end_date=self.end_date))
+        with ThreadPoolExecutor(max_workers=self._max_threads) as executor:
+            futures = list(
+                tqdm(executor.map(count_edges, graph_paths), total=len(graph_paths), desc="Counting edges"))
+            total = sum(futures)
+        return total
+
+    def __len__(self):
+        return self.size
