@@ -9,6 +9,8 @@ from input.iterator import GraphEdgeIterator
 from dscent.iterator import GraphCycleIterator
 from networkx.readwrite.json_graph import node_link_data
 
+from serialize import serialize_graph
+
 _DEFAULT_START_DATE = "2021-10-01"
 # -----
 _DEFAULT_END_DATE = "2021-10-01"
@@ -27,26 +29,38 @@ _DEFAULT_LOG_DIR = "."
 _DEFAULT_PROGRESS_BAR = True
 
 
-# Function to convert non-serializable types
-def serialize_value(value):
-    if isinstance(value, bytes):
-        return value.hex()  # Or use base64.b64encode(value).decode('utf-8') for base64
-    elif isinstance(value, Decimal):
-        return float(value)
-    return value
+# # Function to convert non-serializable types
+# def serialize_value(value):
+#     if isinstance(value, bytes):
+#         return value.hex()  # Or use base64.b64encode(value).decode('utf-8') for base64
+#     elif isinstance(value, Decimal):
+#         return float(value)
+#     return value
+#
+#
+# def serialize_graph_data(graph):
+#     data = node_link_data(graph, edges="edges")
+#     # Fix edge data
+#     for edge in data["edges"]:
+#         for key in edge:
+#             edge[key] = serialize_value(edge[key])
+#     # Fix node data (if needed)
+#     for node in data["nodes"]:
+#         for key in node:
+#             node[key] = serialize_value(node[key])
+#     return data
 
 
-def serialize_graph_data(graph):
-    data = node_link_data(graph, edges="edges")
-    # Fix edge data
-    for edge in data["edges"]:
-        for key in edge:
-            edge[key] = serialize_value(edge[key])
-    # Fix node data (if needed)
-    for node in data["nodes"]:
-        for key in node:
-            node[key] = serialize_value(node[key])
-    return data
+def filtered_interactions(start_date, end_date, buffer_count):
+    for u, v, block_number, data in GraphEdgeIterator(
+            start_date=start_date,
+            end_date=end_date,
+            buffer_count=buffer_count,
+    ):
+        if u == v:
+            continue
+
+        yield 1
 
 
 def main(
@@ -71,8 +85,8 @@ def main(
         cycles_log_path.open("w") as cycles_log_stream,
     ):
         cycles_csv_writer = csv.writer(cycles_log_stream, delimiter=';')
-        # interactions = GraphEdgeIterator(start_date=start_date, end_date=end_date, buffer_count=buffered_files_count)
-        interactions = GraphEdgeIterator(buffer_count=buffered_files_count)
+        interactions = filtered_interactions(
+            start_date=start_date, end_date=end_date, buffer_count=buffered_files_count)
         cycles_csv_writer.writerow(["seed_begin", "seed_end", "next_seed_begin", "candidates", "bundled_cycle"])
         for seed, bundled_cycle_graph in GraphCycleIterator(
                 interactions,
@@ -88,7 +102,7 @@ def main(
                 seed.interval.end,
                 seed.next_begin,
                 json.dumps(list(seed.candidates)),
-                json.dumps(serialize_graph_data(bundled_cycle_graph)),
+                serialize_graph(bundled_cycle_graph),
             ])
             cycles_log_stream.flush()
 
@@ -100,7 +114,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Process graph interactions and detect cycles.")
     parser.add_argument("--start_date", default=_DEFAULT_START_DATE, type=str, help="Start date in YYYY-MM-DD format")
     parser.add_argument("--end_date", default=_DEFAULT_END_DATE, type=str, help="End date in YYYY-MM-DD format")
-    parser.add_argument("--buffer", default=_BUFFERED_FILES_COUNT, type=int, help="Define how many pickle files to keep loaded")
+    parser.add_argument("--buffer", default=_BUFFERED_FILES_COUNT, type=int,
+                        help="Define how many pickle files to keep loaded")
     parser.add_argument("--omega", default=_DEFAULT_OMEGA, type=int, help="Omega value for cycle detection")
     parser.add_argument("--gc_max", default=_DEFAULT_GC_MAX, type=str, help="Garbage Collection maximum memory")
     parser.add_argument("--log_interval", default=_DEFAULT_LOG_INTERVAL, type=int, help="Logging interval")

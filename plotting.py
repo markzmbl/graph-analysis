@@ -38,7 +38,7 @@ diverging_palette = LinearSegmentedColormap.from_list(
 
 a = .75
 b = .5
-pus_palette = matplotlib.colormaps["viridis"]
+pus_palette = matplotlib.colormaps["cmap"]
 intermediate_palette = LinearSegmentedColormap.from_list("intermediate_palette", [primary_palette(a), pus_palette(b)])
 # Create new colormap
 my_pus_palette = LinearSegmentedColormap.from_list(

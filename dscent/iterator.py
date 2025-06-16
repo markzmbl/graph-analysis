@@ -6,22 +6,24 @@ import sys
 import time
 from collections.abc import Iterator, Generator
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
 from threading import Semaphore
 from time import monotonic
 from typing import TextIO
 
 import humanfriendly
+import numpy as np
 import psutil
 from humanfriendly import parse_size
 from tqdm import tqdm
 
-from dscent.graph import BundledCycle
+from dscent.graph import TransactionGraph, TransactionKey
 from dscent.seed import Seed, SeedGenerator, SeedExplorer
 from dscent.types_ import (
     TransactionBlock,
     TargetInteraction,
     EdgeInteraction,
-    Timedelta, Timestamp
+    Timedelta, Timestamp, get_timestamp_from_attributes
 )
 
 
@@ -58,20 +60,25 @@ class GraphCycleIterator:
         """
         # General
         self._use_tqdm = progress_bar
-        interactions = iter(interactions)
         if self._use_tqdm:
             interactions = tqdm(interactions, unit_scale=True, smoothing=1, position=0)
         self._interactions = interactions
         self._iteration_count: int = 0  # Track number of processed edges
 
+        # Time Threshold
+        if isinstance(omega, timedelta):
+            omega = omega.total_seconds()
+            self._omega = omega
+        elif isinstance(omega, np.timedelta64):
+            omega = omega / np.timedelta64(1, 's')
+            self._omega = float(omega)
+        else:
+            self._omega = omega
+
         # Seed Generation
         self._seed_generator = SeedGenerator(omega=omega)
         # Seed Exploration
         self._seed_explorer = SeedExplorer(omega=omega)
-
-        # Time Threshold
-        self._omega = omega
-
         # Memory Monitoring
         self._process = psutil.Process()
         self._max_bytes = parse_size(garbage_collection_max)  # max bytes for pruning old data
@@ -152,7 +159,7 @@ class GraphCycleIterator:
             # Submit exploration task of primed seeds
             self._seed_explorer.submit(primed_seed=primed_seed)
 
-    def _explored_cycles(self) -> Generator[BundledCycle | tuple[Seed, BundledCycle], None, None]:
+    def _explored_cycles(self) -> Generator[TransactionGraph | tuple[Seed, TransactionGraph], None, None]:
         detected_cycles = self._seed_explorer.pop_detected_cycle_graphs(include_seeds=self.yield_seeds)
         if self.yield_seeds:
             for seed, cycle_graphs in detected_cycles.items():
@@ -162,7 +169,7 @@ class GraphCycleIterator:
             for cycle in detected_cycles:
                 yield cycle  # Yield cycle graph
 
-    def __iter__(self) -> Generator[BundledCycle | tuple[Seed, BundledCycle], None, None]:
+    def __iter__(self) -> Generator[TransactionGraph | tuple[Seed, TransactionGraph], None, None]:
         transaction_block: TransactionBlock | None = None  # Placeholder for the first transaction block
         for edge in self._interactions:
 
@@ -171,12 +178,22 @@ class GraphCycleIterator:
             # Track iteration count
             self._iteration_count += 1
             # Extract Edge information
-            source, target, current_time, edge_data = edge
+            source, target, edge_key, edge_data = edge
+
             # Skip trivial self loops
             if source == target:
                 continue
+
             # Add edge to the transaction graph
-            self._seed_explorer.add_edge(source, target, timestamp=current_time, **edge_data)
+            if isinstance(edge_key, TransactionKey):
+                current_time = edge_key.timestamp
+                self._seed_explorer.add_transaction(source, target, timestamp=edge_key, edge_data=edge_data)
+            elif self._time_key is not None:
+                current_time = get_timestamp_from_attributes(edge_data)
+                self._seed_explorer.add_transaction(source, target, timestamp=current_time, edge_data=edge_data)
+            else:
+                self._seed_explorer.add_transaction(source, target, timestamp=edge_key, **edge_data)
+
             # First iteration: Initialize transaction block
             if transaction_block is None:
                 transaction_block = TransactionBlock(timestamp=current_time)

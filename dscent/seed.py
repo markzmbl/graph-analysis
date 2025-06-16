@@ -9,11 +9,11 @@ from functools import reduce
 from itertools import repeat
 from typing import Any
 
+import networkx as nx
 from intervaltree import Interval as DataInterval, IntervalTree
 from networkx.classes import MultiDiGraph
 
-from dscent.graph import ExplorationGraph, TransactionGraph, BundledCycle
-from dscent.locked_dict import LockedDefaultDict
+from dscent.graph import ExplorationGraph, TransactionGraph, TransactionKey
 from dscent.reachability import DirectReachability
 from dscent.types_ import Vertex, Timestamp, Interval, Timedelta, TargetInteraction, PointVertices, TransactionBlock, \
     PointVertex
@@ -130,12 +130,13 @@ class SeedGenerator:
         # If a reverse reachability for an interacting vertex exists
         if vertex in self._reverse_reachability.keys():
             reverse_reachability = self._reverse_reachability[vertex]
-            if len(reverse_reachability) > 0:
+            if not reverse_reachability.empty():
                 # It shall be pruned and trimmed before the lower limit
                 # S(v) ← S(v)\{(x, tx) ∈ S(v) | tx ≤ t−ω}
-                reverse_reachability.trim_before(lower_limit)
+                # print(reverse_reachability.timestamps[0], end=" ")
+                reverse_reachability.after(lower_limit, include_limit=True, inplace=True)
             # If the end result is ∅, the vertex key shall be deleted
-            if len(reverse_reachability) == 0:
+            if reverse_reachability.empty():
                 del self._reverse_reachability[vertex]
 
     def _prune_reverse_reachabilities(self, current_time: Timestamp) -> None:
@@ -168,28 +169,26 @@ class SeedGenerator:
             source_reverse_reachability = self._reverse_reachability[source]
 
             # for (b, tb) ∈ S(b) do
-            cyclic_reachability = DirectReachability(
-                v for v in target_reverse_reachability
-                if v.vertex == target and v.timestamp < block_timestamp
+            cyclic_reachability = (
+                target_reverse_reachability
+                .before(block_timestamp, include_limit=False)
+                .get_series_vertex(target)
             )
+
             # {c ∈ S(a), tc > tb}
-            for cyclic_reachable in cyclic_reachability:
+            for cyclic_reachable_timestamp in cyclic_reachability.timestamps:
                 # C ← {c | (c,tc) ∈ S(a),tc > tb} ∪ {a}
                 candidate_reachability = DirectReachability(source_reverse_reachability)
                 candidates = Candidates([source])
-                candidates.update(c.vertex for c in candidate_reachability)
+                candidates.update(c for c in candidate_reachability.vertices())
                 if len(candidates) > 1:
                     # Output (b, [tb, t], C)
-                    seed_range = slice(cyclic_reachable.timestamp, block_timestamp)
+                    seed_range = slice(cyclic_reachable_timestamp, block_timestamp)
                     new_seeds[seed_range] = candidates
 
         # Remove to avoid duplicate output
         # S(b) ← S(b) \ {(b, tb)}
-        self._reverse_reachability[target] = DirectReachability(
-            reverse_reachable
-            for reverse_reachable in target_reverse_reachability
-            if reverse_reachable.vertex != target
-        )
+        self._reverse_reachability[target].exclude(vertex=target)
         return new_seeds
 
     def process_batch(self, batch: TransactionBlock) -> None:
@@ -201,6 +200,7 @@ class SeedGenerator:
             for vertex in [target, *sources]:
                 if vertex not in pruned_reachabilities:
                     self._prune_reverse_reachability(vertex=vertex, lower_limit=lower_limit)
+                    pruned_reachabilities.add(vertex)
             self._reverse_reachability[target].add(PointVertices(vertices=sources, timestamp=batch.timestamp))
 
         new_target_reachabilities = {}
@@ -271,12 +271,6 @@ class SeedGenerator:
         # Return the list of gathered seeds
         return primed_seeds
 
-    # def wait(self) -> None:
-    #     """
-    #     Wait for all running tasks to complete.
-    #     """
-    #     wait(self._running_tasks)
-
     def cleanup(self, current_time: Timestamp):
         self._prune_reverse_reachabilities(current_time=current_time)
 
@@ -289,14 +283,15 @@ class SeedExplorer:
         self._thread_pool: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=os.cpu_count() // 2)
         # Dynamic directed sub_graph
         self._transaction_graph = TransactionGraph()
-        self._running_tasks: dict[Seed, Future[list[BundledCycle]]] = {}
+        self._running_tasks: dict[Seed, Future[list[TransactionGraph]]] = {}
         self._explored_seeds: set[Seed] = set()
 
-    def add_edge(self, source: Vertex, target: Vertex, timestamp: Timestamp, **edge_data: dict[str, Any]) -> None:
+    def add_transaction(
+            self, source: Vertex, target: Vertex, timestamp: Timestamp | TransactionKey, edge_data: dict[str, Any]) -> None:
         # Add edge to the transaction graph
         self._transaction_graph.add_edge(source, target, key=timestamp, **edge_data)
 
-    def _explore_seed(self, expoloration_graph: ExplorationGraph, next_seed_begin: Timestamp) -> list[BundledCycle]:
+    def _explore_seed(self, expoloration_graph: ExplorationGraph, next_seed_begin: Timestamp) -> list[TransactionGraph]:
         return expoloration_graph.simple_cycles(next_seed_begin)
 
     def submit(self, primed_seed: Seed) -> None:
@@ -333,7 +328,7 @@ class SeedExplorer:
 
     def pop_detected_cycle_graphs(
             self, include_seeds: bool = False
-    ) -> list[BundledCycle] | dict[Seed, list[BundledCycle]]:
+    ) -> list[TransactionGraph] | dict[Seed, list[TransactionGraph]]:
         """
         Retrieve and pop explored graphs from the running tasks.
 

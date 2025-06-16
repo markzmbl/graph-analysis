@@ -3,7 +3,10 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Hashable, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, TypeVar
+
+import pandas as pd
 
 # --- Type variables
 Vertex = TypeVar("Vertex", bound=Hashable)  # Vertex
@@ -99,3 +102,25 @@ class PointVertices(InstantaneousEvent):
 class SeriesVertex(TemporalSpanEvent):
     """A vertex associated with multiple timestamps."""
     vertex: Vertex
+
+
+def get_timestamp_from_attributes(attr):
+    if "datetime" in attr:
+        time = attr["datetime"]
+    elif "timestamp" in attr:
+        time = attr["timestamp"]
+    else:
+        raise ValueError("Attribute must have 'datetime' or 'timestamp'")
+
+    # Handle various input types
+    if isinstance(time, (int, float)):
+        return float(time)
+    elif isinstance(time, str):
+        try:
+            return datetime.fromisoformat(time).timestamp()
+        except ValueError:
+            raise ValueError(f"Cannot parse datetime from string: {time}")
+    elif isinstance(time, (datetime, pd.Timestamp)):
+        return time.timestamp()
+    else:
+        raise TypeError(f"Unsupported timestamp type: {type(time).__name__}")

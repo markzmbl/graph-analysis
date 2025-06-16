@@ -1,204 +1,232 @@
 from __future__ import annotations
 
 import heapq
+from bisect import bisect_right, bisect_left
+from collections import defaultdict
 from collections.abc import Iterator
-from typing import Iterable
+from copy import deepcopy
+from typing import Iterable, Mapping, Literal
+
+from sortedcontainers import SortedSet, SortedDict
 
 from dscent.types_ import Vertex, Timestamp, PointVertex, PointVertices, SeriesVertex
-from dscent.time_sequence import get_split_index, get_trimmed_after, get_trimmed_before
+from dscent.time_sequence import get_split_index, get_sequence_after, get_sequence_before
+
+from collections import defaultdict
+from sortedcontainers import SortedSet
+from typing import Iterable
+
+from collections import defaultdict
+from sortedcontainers import SortedSet, SortedSet
+from itertools import islice, chain
+from bisect import bisect_left, bisect_right
+
+
+class _TimestampsVerticesDict(SortedDict):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def __getitem__(self, key):
+        if key not in self:
+            self[key] = set()
+        return super().__getitem__(key)
 
 
 class DirectReachability:
-    vertices: list[Vertex]
-    timestamps: list[Timestamp]
-
     def __init__(
-            self,
-            timed_vertices: Iterable[PointVertex[Vertex]] | DirectReachability | None = None,
-            vertices: list[Vertex] | None = None,
-            timestamps: list[Timestamp] | None = None,
+            self, direct_reachability: DirectReachability | None = None,
+            timestamp_vertices: Mapping[Timestamp, set[Vertex]] | Iterable[tuple[Timestamp, set[Vertex]]] = None
     ):
-        if isinstance(timed_vertices, DirectReachability):
-            self.vertices = list(timed_vertices.vertices)
-            self.timestamps = list(timed_vertices.timestamps)
+        if direct_reachability is not None:
+            self._timestamps_vertices = _TimestampsVerticesDict(direct_reachability._timestamps_vertices)
+        elif timestamp_vertices is not None:
+            self._timestamps_vertices = _TimestampsVerticesDict(timestamp_vertices)
         else:
-            self.vertices = vertices or []
-            self.timestamps = timestamps or []
-            for timed_vertex in timed_vertices or []:
-                self.vertices.append(timed_vertex.vertex)
-                self.timestamps.append(timed_vertex.timestamp)
-        assert len(self.vertices) == len(self.timestamps)
-        assert sorted(self.timestamps) == self.timestamps
+            self._timestamps_vertices: _TimestampsVerticesDict[Timestamp, set[Vertex]] = _TimestampsVerticesDict()
 
-    def trim_before(self, lower_limit: Timestamp, strict=False) -> None:
-        """
-        Return the pruned  reachability set where stale entries are removed.
+    def add(self, item: PointVertex | PointVertices):
+        timestamp_vertices = self._timestamps_vertices[item.timestamp]
+        try:
+            timestamp_vertices.update(item.vertices)
+        except AttributeError:
+            timestamp_vertices.add(item.vertex)
 
-        :param lower_limit:
-        :param strict: {(v, t) | t >= upper_limit}
-        """
-        idx = get_split_index(self.timestamps, lower_limit, strict, left=True)
-        del self[: idx]
-        assert len(self.vertices) == len(self.timestamps)
+    def empty(self):
+        return len(self._timestamps_vertices) == 0
 
-    def get_trimmed_before(self, lower_limit: Timestamp, strict=False):
-        idx = get_split_index(self.timestamps, lower_limit, strict, left=True)
-        return self[idx:]
+    def clear(self):
+        self._timestamps_vertices.clear()
 
-    def trim_after(self, upper_limit: Timestamp, strict=False) -> None:
-        """
-        Return the pruned reachability set where most recent entries are removed.
+    def get_series_vertex(self, vertex: Vertex) -> SeriesVertex:
+        timestamps = []
+        for ts, vertices in self._timestamps_vertices.items():
+            if vertex in vertices:
+                timestamps.append(ts)
+        return SeriesVertex(vertex=vertex, timestamps=timestamps)
 
-        :param upper_limit:
-        :param strict: {(v, t) | t <= upper_limit}
-        """
-        idx = get_split_index(self.timestamps, upper_limit, strict, left=False)
-        del self[idx:]
-        assert len(self.vertices) == len(self.timestamps)
+    def exclude(self, vertex: Vertex):
+        for ts, vertices in self._timestamps_vertices.items():
+            vertices.discard(vertex)
 
-    def get_trimmed_after(self, upper_limit: Timestamp, strict=False):
-        idx = get_split_index(self.timestamps, upper_limit, strict, left=False)
-        return self[: idx]
+    @property
+    def timestamps(self) -> tuple[Timestamp, ...]:
+        return tuple(self._timestamps_vertices.keys())
 
-    def add(self, item: PointVertex | PointVertices) -> None:
-        """Adds a new vertex and its timestamp in sorted order."""
-        vertices = [item.vertex] if isinstance(item, PointVertex) else item.vertices
-        idx = get_split_index(self.timestamps, limit=item.timestamp, strict=True, left=False)
-        self.timestamps[idx: idx] = len(vertices) * [item.timestamp]
-        self.vertices[idx: idx] = vertices
+    def vertices(self) -> Iterable[Vertex]:
+        yielded = set()
+        for ts, vertices in self._timestamps_vertices.items():
+            for vertex in vertices:
+                if vertex not in yielded:
+                    yield vertex
+                    yielded.add(vertex)
 
-    def append(self, item: PointVertex | PointVertices) -> None:
-        """Adds a new vertex and its timestamp at the end."""
-        vertices = [item.vertex] if isinstance(item, PointVertex) else item.vertices
-        for vertex in vertices:
-            self.timestamps.append(item.timestamp)
-            self.vertices.append(vertex)
+    def merge(self, other: DirectReachability):
+        for ts, vertices in other._timestamps_vertices.items():
+            self._timestamps_vertices[ts].update(vertices)
 
-    def extend(self, other: DirectReachability) -> None:
-        """Extends the set with another DirectReachability."""
-        self.timestamps.extend(other.timestamps)
-        self.vertices.extend(other.vertices)
+    def __getitem__(self, item: Timestamp) -> set[Vertex]:
+        return self._timestamps_vertices[item]
 
-    def __len__(self) -> int:
-        """Returns the number of stored elements."""
-        return len(self.vertices)
+    def __delitem__(self, item: Timestamp):
+        if item in self._timestamps_vertices:
+            del self._timestamps_vertices[item]
+        else:
+            raise KeyError(f"Timestamp {item} not found in DirectReachability.")
 
-    def __getitem__(self, index: int | slice) -> PointVertex[Vertex, Timestamp] | DirectReachability:
-        """Allows indexed access to paired (root, timestamp) tuples."""
-        vert = self.vertices[index]
-        time = self.timestamps[index]
-        if isinstance(index, slice):
-            assert isinstance(vert, list) and isinstance(time, list)
-            return DirectReachability(vertices=vert, timestamps=time)
-        return PointVertex(vertex=vert, timestamp=time)
-
-    def __iter__(self) -> Iterable[PointVertex[Vertex, Timestamp]]:
-        """Enables iteration, returning SingleTimedVertex objects."""
-        return (
-            PointVertex(vertex=vertex, timestamp=timestamp)
-            for vertex, timestamp
-            in zip(self.vertices, self.timestamps)
-        )
-
-    def clear(self) -> None:
-        self.vertices.clear()
-        self.timestamps.clear()
-
-    def __delitem__(self, index: int | slice):
-        """Deletes elements by index or slice."""
-        del self.vertices[index]
-        del self.timestamps[index]
-
-    def __or__(self, other: DirectReachability) -> DirectReachability:
-        """Merge two sorted lists of unique tuples while preserving order and uniqueness."""
-        i, j = 0, 0
-        merged = DirectReachability()
-
-        while i < len(self) and j < len(other):
-            if self[i] < other[j]:
-                merged.add(self[i])
-                i += 1
-            elif other[j] < self[i]:
-                merged.add(other[j])
-                j += 1
-            else:
-                # They are equal, add only one copy
-                merged.add(self[i])
-                i += 1
-                j += 1
-
-        # Append remaining elements (if any)
-        merged.extend(self[i:])
-        merged.extend(other[j:])
-
-        return merged
-
-    def __ior__(self, other: DirectReachability) -> DirectReachability:
-        merged = self | other
-        # Replace contents of self in-place
-        self.clear()
-        self.extend(merged)
-        return self
-
-    @staticmethod
-    def union(*args: DirectReachability) -> DirectReachability:
-        """Perform union like set.union: can be called on instance or class."""
-        import heapq
-
-        if not args:
-            return DirectReachability()
-
-        result = DirectReachability()
-        heap = []
-        last_added = None
-
-        # Initialize the heap with the first element of each input, along with list and index info
-        for list_index, direct_reachability in enumerate(args):
-            if direct_reachability:
-                heapq.heappush(heap, (direct_reachability[0], list_index, 0))
-
-        while heap:
-            point_vertex, list_index, item_index = heapq.heappop(heap)
-
-            if point_vertex != last_added:
-                result.add(point_vertex)
-                last_added = point_vertex
-
-            # Push the next element from the same input list
-            next_index = item_index + 1
-            if next_index < len(args[list_index]):
-                heapq.heappush(heap, (args[list_index][next_index], list_index, next_index))
-
+    def __or__(self, other):
+        result = DirectReachability(self)
+        result.merge(other)
         return result
 
-    def __repr__(self) -> str:
-        return repr(list(iter(self)))
+    def __ior__(self, other):
+        self.merge(other)
+        return self
+
+    def __len__(self):
+        return sum(len(v) for v in self._timestamps_vertices.values())
+
+    @staticmethod
+    def union(*args):
+        result = DirectReachability()
+        for arg in args:
+            result.merge(arg)
+        return result
+
+    def _filter_by_time(
+            self,
+            limit: Timestamp,
+            *,
+            include_limit: bool,
+            inplace: bool,
+            direction: Literal["before", "after"],
+    ) -> DirectReachability | None:
+        index = get_split_index(
+            self.timestamps,
+            limit,
+            direction=direction,
+            include_limit=include_limit
+        )
+        if inplace:
+            if direction == "before":
+                to_remove = self.timestamps[index:]
+            else:  # direction == "after"
+                to_remove = self.timestamps[:index]
+            for timestamp in to_remove:
+                del self[timestamp]
+            return None
+        else:
+            if direction == "before":
+                to_keep = self.timestamps[:index]
+            else:  # direction == "after"
+                to_keep = self.timestamps[index:]
+            return DirectReachability(timestamp_vertices={
+                timestamp: self[timestamp] for timestamp in to_keep
+            })
+
+    def before(
+            self,
+            limit: Timestamp,
+            *,
+            include_limit: bool = False,
+            inplace: bool = False,
+    ) -> DirectReachability | None:
+        return self._filter_by_time(limit, include_limit=include_limit, inplace=inplace, direction="before")
+
+    def after(
+            self,
+            limit: Timestamp,
+            *,
+            include_limit: bool = False,
+            inplace: bool = False,
+    ) -> DirectReachability | None:
+        return self._filter_by_time(limit, include_limit=include_limit, inplace=inplace, direction="after")
 
 
-class SequentialReachability(list[SeriesVertex]):
+class SequentialReachability():
+    def __init__(self, *args: SeriesVertex | Iterable[SeriesVertex]):
+        if len(args) == 1 and isinstance(args[0], Iterable):
+            self._series_vertices = list(args[0])
+        else:
+            self._series_vertices = list(args)
+
+    def __len__(self) -> int:
+        return len(self._series_vertices)
+
+    def __iter__(self) -> Iterator[SeriesVertex]:
+        return iter(self._series_vertices)
+
+    def __getitem__(self, index: int) -> SeriesVertex | list[SeriesVertex]:
+        if isinstance(index, slice):
+            return self._series_vertices[index]
+        return self._series_vertices[index]
+
+    def __setitem__(self, index: int, value: SeriesVertex):
+        if not isinstance(value, SeriesVertex):
+            raise TypeError("Value must be a SeriesVertex instance.")
+        self._series_vertices[index] = value
+
     def reverse_pairs(self) -> Iterator[tuple[SeriesVertex, SeriesVertex]]:
         return reversed(list(zip(self[:-1], self[1:])))
 
-    def append(self, item: SeriesVertex):
-        if len(self) > 0 and item.begin() <= (head := self[-1]).begin():
-            # Copy and Trim
-            item = SeriesVertex(
-                vertex=item.vertex,
-                timestamps=get_trimmed_before(item.timestamps, head.begin(), strict=True)
-            )
-
+    def expand(self, item: SeriesVertex):
         if len(item.timestamps) == 0:
             raise ValueError
 
-        super().append(item)
-        for predecessor_index, (predecessor, successor) in enumerate(self.reverse_pairs()):
+        if len(self) > 0:
+            head = self[-1]
+            if head.vertex == item.vertex:
+                self[-1] = SeriesVertex(
+                    vertex=head.vertex, timestamps=sorted(set(chain(head.timestamps, item.timestamps)))
+                )
+            else:
+                if item.begin() <= head.begin():
+                    # Copy and Trim
+                    item = SeriesVertex(
+                        vertex=item.vertex,
+                        timestamps=tuple(get_sequence_after(item.timestamps, head.begin(), include_limit=False))
+                    )
+                    if len(item.timestamps) == 0:
+                        raise ValueError
+                self._series_vertices.append(item)
+
+        for predecessor_index, (predecessor, successor) in zip(
+                reversed(range(len(self) - 1)),
+                self.reverse_pairs()
+        ):
+            successor_index = predecessor_index + 1
+            assert self[predecessor_index].vertex == predecessor.vertex
+            assert self[successor_index].vertex == successor.vertex
             # Check if predecessor timestamps need trimming
             if predecessor.end() >= successor.end():
                 # Copy and trim
-                trimmed_time_sequence = get_trimmed_after(predecessor.timestamps, successor.end(), strict=True)
-                if len(trimmed_time_sequence) == 0:
-                    raise ValueError
-                self[predecessor_index] = SeriesVertex(
+                predecessor = SeriesVertex(
                     vertex=predecessor.vertex,
-                    timestamps=trimmed_time_sequence
+                    timestamps=tuple(get_sequence_before(
+                        predecessor.timestamps, successor.end(), include_limit=False
+                    ))
                 )
+                if len(predecessor.timestamps) == 0:
+                    raise ValueError
+                self[predecessor_index] = predecessor
+        assert len(set(v.vertex for v in self._series_vertices)) == len(
+            list(v.vertex for v in self._series_vertices)), "Duplicate SeriesVertex detected."
