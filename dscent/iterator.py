@@ -64,11 +64,15 @@ class GraphCycleIterator:
         # General
         self._use_tqdm = progress_bar
         if self._use_tqdm:
-            interactions = tqdm(
-                interactions,
-                total=total or getattr(interactions, "__len__", None),
-                unit_scale=True, smoothing=1, position=0
+            params = dict(
+                unit_scale=True,
+                smoothing=1,
             )
+            if total is not None:
+                params["total"] = total
+            elif getattr(interactions, "__len__", None) is not None:
+                params["total"] = len(interactions)
+            interactions = tqdm(interactions, **params)
         self._interactions = interactions
         self._iteration_count: int = 0  # Track number of processed edges
         self._cycles_yielded: int = 0  # Track number of processed cycles
@@ -132,17 +136,19 @@ class GraphCycleIterator:
 
     def _get_log_line(
             self,
-            header=False
+            log_time: Timestamp | None = None,
+            current_time: Timestamp | None = None,
+            header=False,
     ) -> list[str | float]:
-        current_time = time.monotonic()
         exploration_tasks = self._seed_explorer.get_running_tasks()
         running = sum(task.done() for task in exploration_tasks.values())
         fields = {
-            "time_seconds": current_time,
+            "time_seconds": log_time,
+            "iteration_time": current_time,
             "iterations_total": self._iteration_count,
             "iterations_rate": self._iteration_count / (current_time - self._start_time),
             "cycles_total": self._cycles_yielded,
-            "cycles_rate": self._iteration_count / (current_time - self._start_time),
+            "cycles_rate": self._cycles_yielded / (current_time - self._start_time),
             "memory_usage_bytes": self._get_memory_usage(),
             "task_queue_size": len(exploration_tasks),
             "running_tasks": running,
@@ -159,8 +165,8 @@ class GraphCycleIterator:
         header = self._get_log_line(header=True)
         self._csv_writer.writerow(header)
 
-    def _log(self, log_time):
-        log_line = self._get_log_line()
+    def _log(self, log_time, current_time):
+        log_line = self._get_log_line(log_time=log_time, current_time=current_time)
         self._csv_writer.writerow(log_line)
         self._last_log_time = log_time
 
@@ -241,7 +247,7 @@ class GraphCycleIterator:
                 now = monotonic()
                 # Check if Logging interval is exceeded
                 if now - self._last_log_time > self._logging_interval:
-                    self._log(log_time=now)
+                    self._log(log_time=now, current_time=current_time)
 
         # Start final exploration tasks
         self._start_exploration_tasks(upper_limit=None)
