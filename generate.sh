@@ -10,7 +10,7 @@ conda activate py313
 # Benchmark configuration
 OMEGA_VALUES=(10 25 50)
 BUFFER=10
-GC_MAX="64GB"
+GC_MAX="200GB"
 LOG_INTERVAL=60
 LOG_PREFIX="june-run"
 LOG_DIR="/export/share/markusz33dm/logs/"

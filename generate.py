@@ -39,7 +39,7 @@ def main(
     memory_log_path = log_directory / f"{log_prefix}_memory.csv"
     with memory_log_path.open("w") as memory_log_stream:
         interactions = GraphEdgeIterator(start_date=start_date, end_date=end_date, buffer_count=buffered_files_count)
-        total = len(interactions)
+        total = 1_800_000_000
         interactions = iter(
             (u, v, blocknum, {"timestamp": blocknum})
             for u, v, blocknum, _

@@ -55,6 +55,7 @@ class GraphCycleIterator:
             logging_interval: int = 60,
             yield_seeds: bool = False,
             progress_bar: bool = False,
+            cleanup_interval: int = 10_000_000,
     ) -> None:
         """
         Initializes the GraphCycleIterator with streaming edges, a maximum timestamp
@@ -87,6 +88,7 @@ class GraphCycleIterator:
         # Seed Exploration
         self._seed_explorer = SeedExplorer(omega=omega)
         # Memory Monitoring
+        self._cleanup_interval: int = cleanup_interval
         self._process = psutil.Process()
         self._max_bytes = parse_size(garbage_collection_max)  # max bytes for pruning old data
 
@@ -224,7 +226,7 @@ class GraphCycleIterator:
                 # --- Memory Management ---
 
                 # Check if memory is exceeded
-                if self._memory_limit_exceeded():
+                if (self._iteration_count % self._cleanup_interval) == 0:
                     # Cleanup Memory
                     self.cleanup(current_time=current_time)
                     if self._memory_limit_exceeded():  # Check again after cleanup

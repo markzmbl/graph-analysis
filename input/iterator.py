@@ -246,7 +246,6 @@ class GraphEdgeIterator:
             start_date: date | str | None = None,
             end_date: date | str | None = None,
             buffer_count: int = 2,
-            max_threads: int = 128,
     ):
         # Prepare an iterator of file paths (_transaction_graph files) within the date range
         self.start_date = start_date
@@ -254,7 +253,6 @@ class GraphEdgeIterator:
         self.graph_path_iterator = iter(get_graph_paths(start_date=self.start_date, end_date=self.end_date))
 
         self.buffer_count = buffer_count
-        self._max_threads = max_threads
         # Initialize a buffer (list) of size buffer_count for vertex_timestamps or None
         self.buffer = [None] * self.buffer_count
 
@@ -397,11 +395,11 @@ class GraphEdgeIterator:
                 return graph.number_of_edges()
 
         graph_paths = list(get_graph_paths(start_date=self.start_date, end_date=self.end_date))
-        with ThreadPoolExecutor(max_workers=self._max_threads) as executor:
+        with ThreadPoolExecutor() as executor:
             futures = list(
                 tqdm(executor.map(count_edges, graph_paths), total=len(graph_paths), desc="Counting edges"))
             total = sum(futures)
         return total
 
-    def __len__(self):
-        return self.size
+    # def __len__(self):
+    #     return self.size
