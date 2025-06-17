@@ -229,14 +229,14 @@ class GraphCycleIterator:
                 # Yield results from finished explorations
                 yield from self._explored_cycles()
 
-                # --- Memory Management ---
+            # --- Memory Management ---
 
-                # Check if memory is exceeded
-                if (self._iteration_count % self._cleanup_interval) == 0:
-                    # Cleanup Memory
-                    self.cleanup(current_time=current_time)
-                    if self._memory_limit_exceeded():  # Check again after cleanup
-                        raise MemoryError("Out of memory.")
+            # Check if memory is exceeded
+            if (self._iteration_count % self._cleanup_interval) == 0:
+                # Cleanup Memory
+                self.cleanup(current_time=current_time)
+                if self._memory_limit_exceeded():  # Check again after cleanup
+                    raise MemoryError("Out of memory.")
 
             # This always runs (either for old or new batch)
             transaction_block[target].append(source)
