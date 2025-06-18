@@ -1,4 +1,6 @@
 import argparse
+import csv
+import os
 import subprocess
 import tempfile
 import threading
@@ -8,17 +10,17 @@ from pathlib import Path
 import pandas as pd
 from tqdm import tqdm
 
-from meebits_analysis import load_transactions, OMEGAS
+from dscent.iterator import GraphCycleIterator
+from meebits_analysis import load_transactions, OMEGAS, create_transaction_graph
 
-_DEFAULT_LOG_INTERVAL = 1  # Seconds
-_DEFAULT_LOG_PREFIX = "2scent"
-_DEFAULT_LOG_DIR = "2scent/log"
+_LOG_INTERVAL = 1  # Seconds
+_2SCENT_DIR = "2scent/cache"
+_LOG_DIR = "benchmark"
 
 import time
 import subprocess
 import threading
 from pathlib import Path
-
 
 
 def _log_memory_usage_once(pid: int, f, monitor_csv: Path):
@@ -47,7 +49,7 @@ def _log_memory_usage_once(pid: int, f, monitor_csv: Path):
 
 def monitor_memory_usage(
         pid: int, output_csv: Path, monitor_csv: Path, stop_event: threading.Event,
-        interval: float = _DEFAULT_LOG_INTERVAL
+        interval: float = _LOG_INTERVAL
 ):
     with open(output_csv, "w") as f:
         f.write("time_seconds,cycles_total,memory_usage_bytes\n")
@@ -59,23 +61,19 @@ def monitor_memory_usage(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Process sub_graph interactions and cycles with 2SCENT.")
-    parser.add_argument("--temporary-directory", type=str, default=None, help="Prefix for log files")
-    parser.add_argument("--log-interval", default=_DEFAULT_LOG_INTERVAL, type=int, help="Logging interval")
-    parser.add_argument("--log-prefix", default=_DEFAULT_LOG_PREFIX, type=str, help="Log file prefix")
-    parser.add_argument("--log-dir", default=_DEFAULT_LOG_DIR, type=str, help="Log file directory")
-
-    args = parser.parse_args()
-
-    log_dir = Path(args.log_dir)
+    _2scent_dir = Path(_2SCENT_DIR)
+    _2scent_dir.mkdir(parents=True, exist_ok=True)
+    log_dir = Path(_LOG_DIR)
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_prefix = args.log_prefix
 
     transaction_df = load_transactions()
+    transaction_graph = create_transaction_graph()
+    transactions = sorted(transaction_graph.edges(keys=True, data=True), key=lambda x: x[3]['timestamp'])
+
     actors = pd.unique(transaction_df[['from', 'to']].values.ravel())
     actor_mapping = {actor: idx for idx, actor in enumerate(actors)}
 
-    graph_path = log_dir / "graph.csv"
+    graph_path = _2scent_dir / "graph.csv"
 
     with open(graph_path, "w") as temp_file:
         for _, row in transaction_df.iterrows():
@@ -84,40 +82,59 @@ def main():
             t = int(row["timestamp"])
             temp_file.write(f"{u},{v},{t}\n")
 
-    pbar = tqdm(OMEGAS)
-    for omega in pbar:
-        pbar.set_description(f"{omega}")
-        window = str(int(pd.to_timedelta(omega).total_seconds()))
-        log_file = log_dir / f"{log_prefix}_{omega}.log"
-        output_csv = log_dir / f"{log_prefix}_{omega}.csv"
-        mem_csv = log_dir / f"{log_prefix}_{omega}_memory.csv"
+    run = 0
+    while True:
+        pbar = tqdm(OMEGAS)
+        for omega in pbar:
+            pbar.set_description(f"{omega}")
+            window = str(int(pd.to_timedelta(omega).total_seconds()))
+            log_file = _2scent_dir / f"{omega}_{run}.log"
+            output_csv = _2scent_dir / f"{omega}_{run}.csv"
+            mem_csv = log_dir / f"2scent_{omega}_{run}.csv"
 
-        with log_file.open("w") as log_output_file:
-            process = subprocess.Popen(
-                [
-                    "2scent/CycleDetection/cmake-build-release/CycleDetection",
-                    "-i", graph_path,
-                    "-o", str(output_csv),
-                    "-w", window,
-                    "-b", "1",
-                    "-z", "1"
-                ],
-                stdout=log_output_file,
-                stderr=subprocess.STDOUT,
-                text=True
-            )
+            with log_file.open("w") as log_output_file:
+                monitor_csv = _2scent_dir / f"graph-monitor-{window}-bundle.csv"
+                monitor_csv.unlink(missing_ok=True)
 
-            stop_event = threading.Event()
-            monitor_csv = log_dir / f"graph-monitor-{window}-bundle.csv"
-            mem_thread = threading.Thread(
-                target=monitor_memory_usage,
-                args=(process.pid, mem_csv, monitor_csv, stop_event)
-            )
-            mem_thread.start()
+                process = subprocess.Popen(
+                    [
+                        "2scent/CycleDetection/cmake-build-release/CycleDetection",
+                        "-i", graph_path,
+                        "-o", str(output_csv),
+                        "-w", window,
+                        "-b", "1",
+                        "-z", "1"
+                    ],
+                    stdout=log_output_file,
+                    stderr=subprocess.STDOUT,
+                    text=True
+                )
 
-            process.wait()
-            stop_event.set()
-            mem_thread.join()
+                stop_event = threading.Event()
+
+                mem_thread = threading.Thread(
+                    target=monitor_memory_usage,
+                    args=(process.pid, mem_csv, monitor_csv, stop_event)
+                )
+                mem_thread.start()
+
+                process.wait()
+                stop_event.set()
+                mem_thread.join()
+
+                memory_log_path = log_dir / f"dscent_{omega}_{run}.csv"
+                with memory_log_path.open("w") as memory_log_stream:
+                    for _ in GraphCycleIterator(
+                            transactions,
+                            omega=omega,
+                            logging_interval=_LOG_INTERVAL,
+                            log_stream=memory_log_stream,
+                            progress_bar=True,
+                    ):
+                        pass
+            break
+        run += 1
+        break
 
 
 if __name__ == "__main__":
