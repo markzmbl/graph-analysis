@@ -313,9 +313,10 @@ class ExplorationGraph(TransactionGraph):
             assert len(timestamps) > 0
             u, v = predecessor.vertex, successor.vertex
             for key, data in self[u][v].items():
-                data = dict(data)
-                data["timestamp"] = key.timestamp
-                edges.append((u, v, key.edge_key, data))
+                if key.timestamp in timestamps:
+                    data = dict(data)
+                    data["timestamp"] = key.timestamp
+                    edges.append((u, v, key.edge_key, data))
         bundled_cycle = nx.MultiDiGraph(edges)
         return bundled_cycle
 

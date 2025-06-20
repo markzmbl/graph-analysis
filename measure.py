@@ -1,3 +1,4 @@
+import heapq
 import json
 from collections import defaultdict
 from collections.abc import Callable
@@ -6,6 +7,7 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
+from networkx.classes import MultiDiGraph
 from tqdm import tqdm
 from pandas.errors import ParserError
 
@@ -259,6 +261,62 @@ def get_burstiness(
     return float((sigma - mu) / (sigma + mu))
 
 
+def get_times(graph: TransactionGraph):
+    times = set()
+    for u, v, key in graph.edges(keys=True):
+        times.add(key.timestamp)
+    return times
+
+def get_root(graph: TransactionGraph):
+    return next(iter(u for u, *_ in sorted(graph.edges(keys=True), key=lambda e: e[2].timestamp)))
+
+def get_path_bundle(graph: TransactionGraph):
+    # Step 1: Identify the root based on earliest timestamp
+    root = get_root(graph)
+    vertex = root
+    successor = None
+    path_bundle = []
+
+    # Step 2: Build the path bundle along the unique cycle
+    while successor != root:
+        successors = list(graph.successors(vertex))
+        assert len(successors) == 1, f"Vertex {vertex} does not have exactly one successor"
+        successor = successors[0]
+        timestamps = [key.timestamp for key in graph[vertex][successor].keys()]
+        path_bundle.append(sorted(timestamps))
+        vertex = successor
+    return path_bundle
+
+import heapq
+from typing import List
+
+def get_cardinality(graph) -> int:
+    """
+    Compute the number of timestamp-increasing paths through the given path bundle.
+    Each path_bundle[i] is a list of timestamps for transitions between nodes i → i+1.
+    """
+    path_bundle = get_path_bundle(graph)
+    if not path_bundle:
+        return 0
+
+    k = len(path_bundle)
+    # Initialize with dummy H0, one path with time -∞
+    layers = [[(float('-inf'), 1)]]
+
+    for i in range(k):
+        current = []
+        Ti = sorted(path_bundle[i])           # Current layer timestamps
+        prev_layer = sorted(layers[-1])       # Previous layer: (timestamp, count)
+
+        for t in Ti:
+            count = sum(n for t_prev, n in prev_layer if t_prev < t)
+            current.append((t, count))
+        layers.append(current)
+
+    final_layer = layers[-1]
+    return sum(n for _, n in final_layer)
+
+
 def compute_component_df(cycle_df: AnalysisDataFrame):
     edge_list = []
     n = len(cycle_df)
@@ -333,6 +391,7 @@ def load_cycles(omega: np.timedelta64) -> AnalysisDataFrame:
     cycle_df = AnalysisDataFrame(
         pd.read_csv(cycles_path, delimiter=";"), omega=omega, name="Cycles"
     )
+    cycle_df["cardinality"] = cycle_df["graph"].apply(get_cardinality)
     return cycle_df
 
 
@@ -347,12 +406,3 @@ def get_component_df(cycle_df, omega=None):
         component_df.to_serializable().to_csv(cache_path, sep=";", index=False)
     return component_df
 
-
-if __name__ == '__main__':
-    class tmp:
-        pass
-
-
-    tmp = tmp()
-    tmp.omega = np.timedelta64(10, "m")
-    print(get_component_df(tmp).to_serializable()["graph"])

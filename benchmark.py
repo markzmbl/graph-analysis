@@ -98,7 +98,7 @@ def main():
 
                 process = subprocess.Popen(
                     [
-                        "2scent/CycleDetection/cmake-build-release/CycleDetection",
+                        "2scent/ethereum2.csv/CycleDetection",
                         "-i", graph_path,
                         "-o", str(output_csv),
                         "-w", window,
