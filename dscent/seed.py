@@ -55,7 +55,7 @@ class RootIntervalTree(IntervalTree[Candidates]):
               into the tree. You may want to do `self.clear(); self.update(merged)`
               after the call.
         """
-        if not self:
+        if len(self) > 1:
             return
 
         # Sort by start time; longer intervals first when begins are equal
@@ -134,7 +134,7 @@ class SeedGenerator:
                 # It shall be pruned and trimmed before the lower limit
                 # S(v) ← S(v)\{(x, tx) ∈ S(v) | tx ≤ t−ω}
                 # print(reverse_reachability.timestamps[0], end=" ")
-                reverse_reachability.after(lower_limit, include_limit=True, inplace=True)
+                reverse_reachability.after(lower_limit, include_limit=False, inplace=True)
             # If the end result is ∅, the vertex key shall be deleted
             if reverse_reachability.empty():
                 del self._reverse_reachability[vertex]
@@ -169,18 +169,20 @@ class SeedGenerator:
             source_reverse_reachability = self._reverse_reachability[source]
 
             # for (b, tb) ∈ S(b) do
-            cyclic_reachability = (
+            cyclic_timestamps = (
                 target_reverse_reachability
                 .before(block_timestamp, include_limit=False)
                 .get_series_vertex(target)
+                .timestamps
             )
 
             # {c ∈ S(a), tc > tb}
-            for cyclic_reachable_timestamp in cyclic_reachability.timestamps:
+            cyclic_reachability = DirectReachability(source_reverse_reachability)
+            for cyclic_reachable_timestamp in cyclic_timestamps:
                 # C ← {c | (c,tc) ∈ S(a),tc > tb} ∪ {a}
-                candidate_reachability = DirectReachability(source_reverse_reachability)
                 candidates = Candidates([source])
-                candidates.update(c for c in candidate_reachability.vertices())
+                cyclic_reachability.after(limit=cyclic_reachable_timestamp, include_limit=False, inplace=True)
+                candidates.update(cyclic_reachability.vertices())
                 if len(candidates) > 1:
                     # Output (b, [tb, t], C)
                     seed_range = slice(cyclic_reachable_timestamp, block_timestamp)
@@ -287,7 +289,8 @@ class SeedExplorer:
         self._explored_seeds: set[Seed] = set()
 
     def add_transaction(
-            self, source: Vertex, target: Vertex, timestamp: Timestamp | TransactionKey, edge_data: dict[str, Any]) -> None:
+            self, source: Vertex, target: Vertex, timestamp: Timestamp | TransactionKey,
+            edge_data: dict[str, Any]) -> None:
         # Add edge to the transaction graph
         self._transaction_graph.add_edge(source, target, key=timestamp, **edge_data)
 
