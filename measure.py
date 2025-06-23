@@ -317,27 +317,39 @@ def get_cardinality(graph) -> int:
     return sum(n for _, n in final_layer)
 
 
+from intervaltree import Interval, IntervalTree
+from tqdm import tqdm
+
 def compute_component_df(cycle_df: AnalysisDataFrame):
     edge_list = []
     n = len(cycle_df)
-    pbar = tqdm(total=(n * (n - 1)) // 2, desc="Building meta graph", unit_scale=True)
+    omega = cycle_df.omega
+
+    # Build IntervalTree with cycle indices
+    tree = IntervalTree()
+    for idx in tqdm(range(n), desc="Building interval tree"):
+        begin, end = cycle_df.at[idx, "begin"], cycle_df.at[idx, "end"]
+        tree.add(Interval(begin - omega, end + omega, idx))
+
+    pbar = tqdm(total=n, desc="Building meta graph", unit_scale=True)
 
     for i in range(n):
-        begin_i = cycle_df.at[i, "begin"]
-        end_i = cycle_df.at[i, "end"]
+        begin_i, end_i = cycle_df.at[i, "begin"], cycle_df.at[i, "end"]
         vertices_i = set(cycle_df.at[i, "vertices"])
 
-        for j in range(i + 1, n):
-            begin_j = cycle_df.at[j, "begin"]
-            end_j = cycle_df.at[j, "end"]
-            vertices_j = set(cycle_df.at[j, "vertices"])
+        overlapping_intervals = tree[begin_i:end_i]
 
-            # Check if intervals [begin_i, end_i] and [begin_j, end_j] overlap
-            if (end_i + cycle_df.omega >= begin_j) and (end_j >= begin_i - cycle_df.omega):
-                # Check if they share any vertices
-                if not vertices_i.isdisjoint(vertices_j):
-                    edge_list.append((i, j))
-            pbar.update(1)
+        for interval in overlapping_intervals:
+            j = interval.data
+            if j <= i:
+                continue
+
+            vertices_j = set(cycle_df.at[j, "vertices"])
+            if not vertices_i.isdisjoint(vertices_j):
+                edge_list.append((i, j))
+
+        pbar.update(1)
+    pbar.close()
 
     # Build and analyze the meta graph
     meta_graph = nx.Graph()
