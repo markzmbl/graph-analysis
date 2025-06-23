@@ -138,7 +138,7 @@ class _ClosureManager(DefaultDict[Vertex, Timestamp]):
 
     def add_dependency(self, origin: Vertex, dependency: PointVertex):
         # U(v) ← U(v) \ {(w, t′)}
-        self.dependencies[origin].after(dependency.timestamp, inplace=True)
+        self.dependencies[origin].before(limit=dependency.timestamp, include_limit=True, inplace=True)
         # U(v) ← U(v) ∪ {(w, t)}
         self.dependencies[origin].add(dependency)
 
@@ -182,16 +182,13 @@ class ExplorationGraph(TransactionGraph):
                     # Unblock(w, t_max)
                     self.cascade_closure(origin=root, closing_time=timestamps[-1])
 
-    def activated_edges(self, current_timestamp: Timestamp, strict=False):
+    def activated_edges(self, current_timestamp: Timestamp):
         begin_filter = self._begin_filter(begin=current_timestamp, include_limit=False)
 
         def activation_filter(u, v, key):
             ts = key.timestamp
             closing_time = self._closure[v]
-            return (
-                    begin_filter(u, v, key)
-                    and (ts < closing_time if strict else ts <= closing_time)
-            )
+            return begin_filter(u, v, key) and (ts <= closing_time)
 
         return nx.subgraph_view(self, filter_edge=activation_filter)
 
@@ -242,7 +239,7 @@ class ExplorationGraph(TransactionGraph):
             if successor_vertex == self.root_vertex:
                 continue
             # T_x ← {t | (v_cur, x, t) ∈ Out}
-            successor_time_sequence = successor_edges.timestamps()
+            successor_time_sequence = sorted(set(successor_edges.timestamps()))
             # T_x′ ← {t ∈ Tx |t < ct(x)}
             open_time_sequence = get_sequence_before(
                 successor_time_sequence, limit=self._closure[successor_vertex], include_limit=False)
@@ -286,13 +283,13 @@ class ExplorationGraph(TransactionGraph):
     def simple_cycles(self, next_seed_begin: Timestamp) -> list[TransactionGraph]:
         all_cycles = []
         for successor_vertex in self.successors(self.root_vertex):
-            timestamps = get_sequence_before(
+            timestamps = set(get_sequence_before(
                 self[self.root_vertex][successor_vertex].timestamps(),
                 next_seed_begin, include_limit=False
-            )
+            ))
             if len(timestamps) == 0:
                 continue
-            path = SequentialReachability(SeriesVertex(vertex=successor_vertex, timestamps=tuple(timestamps)))
+            path = SequentialReachability(SeriesVertex(vertex=successor_vertex, timestamps=tuple(sorted(timestamps))))
             # Create a new path with the successor vertex and its timestamps
             _, sequential_reachabilities = self._simple_cycles(path=path, cycles=[])
             cycles = [
