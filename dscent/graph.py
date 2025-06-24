@@ -138,7 +138,8 @@ class _ClosureManager(DefaultDict[Vertex, Timestamp]):
 
     def add_dependency(self, origin: Vertex, dependency: PointVertex):
         # U(v) ← U(v) \ {(w, t′)}
-        self.dependencies[origin].before(limit=dependency.timestamp, include_limit=True, inplace=True)
+        for timestamp in self.dependencies[origin].after(dependency.timestamp, include_limit=True).timestamps:
+            self.dependencies[origin][timestamp].discard(dependency.vertex)
         # U(v) ← U(v) ∪ {(w, t)}
         self.dependencies[origin].add(dependency)
 
@@ -156,31 +157,31 @@ class ExplorationGraph(TransactionGraph):
         return self._root_vertex
 
     def cascade_closure(self, origin: Vertex, closing_time: Timestamp):
+        if origin not in self._closure.dependencies:
+            return
         # for (w, t_w) ∈ U(v) do
         dependencies = self._closure.dependencies[origin]
         # if t_w < t_v then
+        early_dependencies = dependencies.before(closing_time, include_limit=False)
         # U(v) ← U(v) \ {(w, tw)}
-        dependencies.before(closing_time, include_limit=False, inplace=True)
-
-        for ts in dependencies.timestamps:
+        for timestamp in early_dependencies.timestamps:
             # T[w, v] = {t | (w, v, t) ∈ E}
             # T ← {t ∈ T[w, v] | t_v ≤ t}
-            for root in dependencies[ts]:
-                timestamps = get_sequence_after(self[root][origin].timestamps(), limit=closing_time, include_limit=True)
-
+            for dependency in early_dependencies[timestamp]:
+                all_timestamps = self[dependency][origin].timestamps()
+                late_timestamps = get_sequence_after(all_timestamps, limit=closing_time, include_limit=True)
                 # if T ≠ ∅ then
-                if len(timestamps) > 0:
+                if len(late_timestamps) > 0:
                     # U(v) ← U(v) ∪ {(w, min(T))}
                     self._closure.add_dependency(
                         origin=origin,
-                        dependency=PointVertex(vertex=root, timestamp=timestamps[0])
+                        dependency=PointVertex(vertex=dependency, timestamp=late_timestamps[0])
                     )
                 # t_max ← max {t ∈ T[w, v] | t < t_v}
-                timestamps = get_sequence_before(timestamps, limit=closing_time, include_limit=False)
-                if len(timestamps) > 0 and timestamps[-1] > self._closure[root]:
-                    self._closure[root] = timestamps[-1]
-                    # Unblock(w, t_max)
-                    self.cascade_closure(origin=root, closing_time=timestamps[-1])
+                early_timestamps = get_sequence_before(all_timestamps, limit=closing_time, include_limit=False)
+                self._closure[dependency] = early_timestamps[-1]
+                # Unblock(w, t_max)
+                self.cascade_closure(origin=dependency, closing_time=early_timestamps[-1])
 
     def activated_edges(self, current_timestamp: Timestamp):
         begin_filter = self._begin_filter(begin=current_timestamp, include_limit=False)
@@ -273,7 +274,7 @@ class ExplorationGraph(TransactionGraph):
             except ValueError:  # Timestamps incompatible
                 pass
 
-        if closing_time > current_timestamp:
+        if closing_time > self._closure[current_vertex]:
             # Unblock(v_cur, lastp)
             self._closure[current_vertex] = closing_time
             self.cascade_closure(origin=current_vertex, closing_time=closing_time)

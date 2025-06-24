@@ -11,10 +11,11 @@ from matplotlib import pyplot as plt
 from dscent.graph import TransactionGraph, ExplorationGraph
 from dscent.seed import Candidates, Seed
 from dscent.types_ import Interval
+from measure import get_path_bundle
 
 edges = [
-    ("a", "b", 1),
     ("a", "c", 5),
+    ("a", "b", 1),
     ("b", "c", 5),
     ("c", "d", 6),
     ("c", "e", 7),
@@ -44,5 +45,5 @@ exploration_graph = ExplorationGraph(
     root_vertex=seed.root
 )
 for c in exploration_graph.simple_cycles(seed.candidates.next_begin):
-    print(str(c))
+    print(get_path_bundle(TransactionGraph.from_networkx(c)))
 
